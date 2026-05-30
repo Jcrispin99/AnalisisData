@@ -1,0 +1,72 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+<div class="px-4">
+    <ul class="flex flex-wrap text-sm text-font-subtle-light dark:text-font-subtle-dark">
+        <li><a href="{% url 'admin:index' %}">{% trans 'Home' %}</a></li>
+        <li class="px-2">/</li>
+        <li><a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a></li>
+        <li class="px-2">/</li>
+        <li><a href="{{ cancel_url }}">{{ opts.verbose_name_plural|capfirst }}</a></li>
+        <li class="px-2">/</li>
+        <li>{{ title }}</li>
+    </ul>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl">
+    <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default p-6 mb-6">
+        <h2 class="font-semibold mb-3">Instrucciones</h2>
+        <ol class="list-decimal pl-5 space-y-1 text-sm">
+            <li>Descarga la plantilla desde el listado de {{ opts.verbose_name_plural|capfirst }} (botón <strong>Descargar plantilla</strong>).</li>
+            <li>Completa una fila por cada {{ opts.verbose_name }}, sin renombrar las columnas.</li>
+            <li>Las fechas pueden ir como <code>YYYY-MM-DD</code>, <code>DD/MM/YYYY</code> o formato fecha de Excel.</li>
+            <li>{{ key_fields_help|safe }}</li>
+        </ol>
+
+        <details class="mt-4 text-sm">
+            <summary class="cursor-pointer font-medium">Columnas esperadas</summary>
+            <ul class="mt-2 grid grid-cols-2 gap-1 list-disc pl-5">
+                {% for col in columnas %}<li>{{ col }}</li>{% endfor %}
+            </ul>
+        </details>
+    </div>
+
+    <form method="post" enctype="multipart/form-data"
+          class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default p-6">
+        {% csrf_token %}
+
+        {% if form.non_field_errors %}
+            <div class="text-red-600 mb-3">{{ form.non_field_errors }}</div>
+        {% endif %}
+
+        <div class="mb-4">
+            <label for="{{ form.archivo.id_for_label }}" class="block font-medium mb-2">
+                {{ form.archivo.label }}
+            </label>
+            {{ form.archivo }}
+            {% if form.archivo.help_text %}
+                <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark mt-1">
+                    {{ form.archivo.help_text }}
+                </p>
+            {% endif %}
+            {% if form.archivo.errors %}
+                <p class="text-red-600 text-sm mt-1">{{ form.archivo.errors }}</p>
+            {% endif %}
+        </div>
+
+        <div class="flex gap-2">
+            <button type="submit"
+                    class="bg-primary-600 hover:bg-primary-700 text-white font-medium px-4 py-2 rounded-default">
+                Procesar archivo
+            </button>
+            <a href="{{ cancel_url }}"
+               class="px-4 py-2 rounded-default border border-base-200 dark:border-base-800">
+                Cancelar
+            </a>
+        </div>
+    </form>
+</div>
+{% endblock %}
