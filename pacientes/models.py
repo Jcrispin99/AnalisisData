@@ -30,6 +30,7 @@ class Paciente(models.Model):
     instruccion = models.CharField(
         "Instrucción", max_length=20, choices=INSTRUCCION_CHOICES, blank=True
     )
+    departamento = models.CharField("Departamento", max_length=100, blank=True)
     provincia = models.CharField("Provincia", max_length=100, blank=True)
     distrito = models.CharField("Distrito", max_length=100, blank=True)
     direccion = models.CharField("Dirección", max_length=255, blank=True)

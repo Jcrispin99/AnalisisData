@@ -29,6 +29,7 @@ EXCEL_COLUMNS = [
     ("nombre_area", "Nombre de Area"),
     ("nombre_unidad_org", "Nombre unidad org."),
     ("fec_nacimiento", "Fec. Nacimiento"),
+    ("departamento", "Departamento"),
     ("provincia", "Provincia"),
     ("distrito", "Distrito"),
     ("direccion", "Dirección"),
@@ -276,7 +277,7 @@ class PacienteAdmin(ModelAdmin):
         "nombre_area",
         "fec_ingreso",
     )
-    list_filter = ("convenio", "nombre_area", "provincia", "distrito")
+    list_filter = ("convenio", "nombre_area", "departamento", "provincia", "distrito")
     search_fields = ("id_rh", "nombre_completo", "nro_documento")
     ordering = ("nombre_completo",)
     fieldsets = (
@@ -300,7 +301,7 @@ class PacienteAdmin(ModelAdmin):
             ),
         }),
         ("Ubicación", {
-            "fields": ("provincia", "distrito", "direccion"),
+            "fields": ("departamento", "provincia", "distrito", "direccion"),
         }),
     )
 
