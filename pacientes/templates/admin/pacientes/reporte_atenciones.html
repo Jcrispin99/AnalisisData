@@ -1,0 +1,254 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+<div class="px-4">
+    <ul class="flex flex-wrap text-sm text-font-subtle-light dark:text-font-subtle-dark">
+        <li><a href="{% url 'admin:index' %}">{% trans 'Home' %}</a></li>
+        <li class="px-2">/</li>
+        <li>Reporte clínico</li>
+    </ul>
+</div>
+{% endblock %}
+
+{% block extrahead %}
+{{ block.super }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="{ tab: '{{ data.pestañas.0.id }}' }">
+
+    {# ---- Filtros ---- #}
+    <form method="get"
+          class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default p-4 flex flex-wrap gap-4 items-end">
+        <div>
+            <label class="block text-xs font-medium mb-1">Año</label>
+            <select name="year" class="border border-base-200 dark:border-base-800 rounded-default px-3 py-2 bg-white dark:bg-base-900">
+                <option value="">Todos</option>
+                {% for y in años %}
+                    <option value="{{ y }}" {% if selected_year == y %}selected{% endif %}>{{ y }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div>
+            <label class="block text-xs font-medium mb-1">Convenio</label>
+            <select name="convenio" class="border border-base-200 dark:border-base-800 rounded-default px-3 py-2 bg-white dark:bg-base-900">
+                <option value="">Todos</option>
+                {% for c in filtros.convenios %}
+                    <option value="{{ c }}" {% if selected_convenio == c %}selected{% endif %}>{{ c }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div>
+            <label class="block text-xs font-medium mb-1">Área</label>
+            <select name="area" class="border border-base-200 dark:border-base-800 rounded-default px-3 py-2 bg-white dark:bg-base-900">
+                <option value="">Todas</option>
+                {% for a in filtros.areas %}
+                    <option value="{{ a }}" {% if selected_area == a %}selected{% endif %}>{{ a }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div>
+            <label class="block text-xs font-medium mb-1">Sexo</label>
+            <select name="sexo" class="border border-base-200 dark:border-base-800 rounded-default px-3 py-2 bg-white dark:bg-base-900">
+                <option value="">Todos</option>
+                <option value="M" {% if selected_sexo == 'M' %}selected{% endif %}>Masculino</option>
+                <option value="F" {% if selected_sexo == 'F' %}selected{% endif %}>Femenino</option>
+            </select>
+        </div>
+
+        <div class="flex gap-2">
+            <button type="submit"
+                    class="bg-primary-600 hover:bg-primary-700 text-white font-medium px-4 py-2 rounded-default">
+                Aplicar filtros
+            </button>
+            <a href="{% url 'reportes_atenciones' %}"
+               class="px-4 py-2 rounded-default border border-base-200 dark:border-base-800">
+                Limpiar
+            </a>
+        </div>
+    </form>
+
+    {# ---- Pestañas ---- #}
+    <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default">
+        <div class="border-b border-base-200 dark:border-base-800 overflow-x-auto">
+            <nav class="flex gap-1 px-3 pt-3">
+                {% for p in data.pestañas %}
+                    <button type="button"
+                            @click="tab='{{ p.id }}'"
+                            :class="tab==='{{ p.id }}' ? 'border-primary-600 text-primary-700 dark:text-primary-300' : 'border-transparent text-font-subtle-light dark:text-font-subtle-dark hover:text-base-700 dark:hover:text-base-200'"
+                            class="px-4 py-2 -mb-px border-b-2 text-sm font-medium whitespace-nowrap transition">
+                        {{ p.titulo }}
+                    </button>
+                {% endfor %}
+            </nav>
+        </div>
+
+        {% for p in data.pestañas %}
+            <div x-show="tab==='{{ p.id }}'" x-cloak class="p-4 space-y-6">
+                {% for fila in p.filas %}
+                    <div class="group bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 border-l-4 border-l-primary-500 rounded-default shadow-sm hover:shadow-md transition-shadow p-5">
+                        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <h3 class="font-semibold text-lg tracking-tight">{{ fila.label }}</h3>
+                                {% if fila.tooltip %}
+                                    <div x-data="{ open: false }" class="relative">
+                                        <button type="button"
+                                                @mouseenter="open = true" @mouseleave="open = false"
+                                                @focus="open = true" @blur="open = false"
+                                                @click="open = !open"
+                                                aria-label="Ver fórmula aplicada"
+                                                class="w-5 h-5 rounded-full bg-base-100 dark:bg-base-800 text-font-subtle-light dark:text-font-subtle-dark hover:bg-primary-100 hover:text-primary-700 dark:hover:bg-primary-900/40 dark:hover:text-primary-300 text-xs font-bold flex items-center justify-center transition-colors cursor-help">
+                                            ?
+                                        </button>
+                                        <div x-show="open" x-cloak x-transition.opacity
+                                             @mouseenter="open = true" @mouseleave="open = false"
+                                             class="absolute left-7 top-0 z-20 w-80 p-3 bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xl text-xs leading-relaxed">
+                                            {{ fila.tooltip|safe }}
+                                        </div>
+                                    </div>
+                                {% endif %}
+                                <span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-primary-50 dark:bg-primary-950/40 text-primary-700 dark:text-primary-300 font-medium">
+                                    {{ fila.total_con_dato }} con dato
+                                </span>
+                                {% if fila.sin_dato %}
+                                    <span class="text-xs text-font-subtle-light dark:text-font-subtle-dark">
+                                        · {{ fila.sin_dato }} sin dato
+                                    </span>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-5 gap-5">
+                            {# Tabla #}
+                            <div class="lg:col-span-2">
+                                <table class="w-full text-sm">
+                                    <thead>
+                                        <tr class="text-xs uppercase tracking-wider text-font-subtle-light dark:text-font-subtle-dark">
+                                            <th class="text-left pb-2 pr-3 font-medium">Categoría</th>
+                                            <th class="text-right pb-2 px-2 font-medium w-12">n</th>
+                                            <th class="text-left pb-2 pl-2 font-medium">Distribución</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-base-100 dark:divide-base-800/60">
+                                        {% for celda in fila.celdas %}
+                                            <tr class="hover:bg-base-50 dark:hover:bg-base-800/40 transition-colors">
+                                                <td class="py-2.5 pr-3">
+                                                    <span class="inline-flex items-center gap-2">
+                                                        <span class="inline-block w-2.5 h-2.5 rounded-full ring-2 ring-white dark:ring-base-900" style="background-color: {{ celda.color }}"></span>
+                                                        <span class="text-sm">{{ celda.categoria }}</span>
+                                                    </span>
+                                                </td>
+                                                <td class="py-2.5 px-2 text-right">
+                                                    <span class="font-semibold text-base tabular-nums">{{ celda.n }}</span>
+                                                </td>
+                                                <td class="py-2.5 pl-2 min-w-[140px]">
+                                                    {% if fila.total_con_dato %}
+                                                        <div class="flex items-center gap-2">
+                                                            <div class="flex-1 h-2 bg-base-100 dark:bg-base-800 rounded-full overflow-hidden">
+                                                                <div class="h-full rounded-full transition-all"
+                                                                     style="width: {{ celda.pct|floatformat:1 }}%; background-color: {{ celda.color }}"></div>
+                                                            </div>
+                                                            <span class="text-xs font-medium tabular-nums text-font-subtle-light dark:text-font-subtle-dark min-w-[3rem] text-right">{{ celda.pct|floatformat:1 }}%</span>
+                                                        </div>
+                                                    {% else %}
+                                                        <span class="text-xs text-font-subtle-light dark:text-font-subtle-dark">—</span>
+                                                    {% endif %}
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {# Gráfico #}
+                            <div class="lg:col-span-3 min-h-[260px]">
+                                <canvas id="chart-{{ p.id }}-{{ fila.clave }}"
+                                        class="!max-h-[280px]"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        {% endfor %}
+    </div>
+
+    <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark">
+        Categorías y umbrales según <code>CRITERIOS DE ESTUDIO.xlsx</code>. Eritrocitosis considera la altitud
+        (umbral 2500 msnm) derivada del distrito/provincia/departamento del paciente.
+        Composición corporal: IMC (OMS), % grasa corporal (ACSM), grasa visceral (Tanita), % masa muscular (Tanita).
+    </p>
+</div>
+
+{# ---- Datos para Chart.js (un solo blob, indexado por canvas id) ---- #}
+{{ chart_data|json_script:"chart-data" }}
+
+<script>
+(function () {
+    const PALETA_FALLBACK = ['#22c55e', '#eab308', '#f97316', '#ef4444', '#a855f7', '#3b82f6'];
+    const DATA = JSON.parse(document.getElementById('chart-data').textContent);
+
+    function hexToRgba(hex, alpha) {
+        const v = hex.replace('#', '');
+        const r = parseInt(v.substring(0, 2), 16);
+        const g = parseInt(v.substring(2, 4), 16);
+        const b = parseInt(v.substring(4, 6), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    function renderChart(canvas) {
+        const serie = DATA[canvas.id];
+        if (!serie) return;
+        const datasets = serie.datasets.map((d, i) => {
+            const color = d.color || PALETA_FALLBACK[i % PALETA_FALLBACK.length];
+            return {
+                label: d.label,
+                data: d.data,
+                borderColor: color,
+                backgroundColor: hexToRgba(color, 0.45),
+                fill: true,
+                tension: 0.3,
+                pointRadius: 2,
+            };
+        });
+        new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: { labels: serie.labels, datasets: datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+                    tooltip: { mode: 'index' },
+                },
+                scales: {
+                    y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
+                    x: { stacked: true },
+                },
+            },
+        });
+    }
+
+    function renderVisible() {
+        document.querySelectorAll('canvas[id^="chart-"]').forEach(c => {
+            if (c.dataset.rendered) return;
+            if (c.offsetParent === null) return;  // oculto en pestaña inactiva
+            c.dataset.rendered = '1';
+            renderChart(c);
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        renderVisible();
+        // Al cambiar pestaña, Alpine despliega canvases ocultos: re-render.
+        document.addEventListener('click', () => setTimeout(renderVisible, 60));
+    });
+})();
+</script>
+<style>[x-cloak] { display: none !important; }</style>
+{% endblock %}

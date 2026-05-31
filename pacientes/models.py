@@ -2,6 +2,9 @@ from datetime import date
 
 from django.db import models
 
+from . import criterios
+from .peru_altitudes import altitud_estimada, es_altura
+
 
 class Paciente(models.Model):
     SEXO_CHOICES = [
@@ -34,6 +37,12 @@ class Paciente(models.Model):
     provincia = models.CharField("Provincia", max_length=100, blank=True)
     distrito = models.CharField("Distrito", max_length=100, blank=True)
     direccion = models.CharField("Dirección", max_length=255, blank=True)
+    altitud_msnm = models.IntegerField(
+        "Altitud (msnm)",
+        null=True,
+        blank=True,
+        help_text="Si se deja vacío se estima a partir de departamento/distrito.",
+    )
 
     class Meta:
         verbose_name = "Paciente"
@@ -53,6 +62,16 @@ class Paciente(models.Model):
             - self.fec_nacimiento.year
             - ((hoy.month, hoy.day) < (self.fec_nacimiento.month, self.fec_nacimiento.day))
         )
+
+    @property
+    def altitud_efectiva(self):
+        if self.altitud_msnm is not None:
+            return self.altitud_msnm
+        return altitud_estimada(self.distrito, self.provincia, self.departamento)
+
+    @property
+    def es_altura(self):
+        return es_altura(self.altitud_efectiva)
 
 
 class Atencion(models.Model):
@@ -91,6 +110,82 @@ class Atencion(models.Model):
     def __str__(self):
         return f"{self.paciente.nro_documento} - {self.fecha}"
 
+    # ----- Clasificaciones clínicas (calculadas, no se guardan en BD) -----
+
+    @property
+    def clasif_colesterol_total(self):
+        return criterios.clasificar_colesterol_total(self.colesterol_total)
+
+    @property
+    def clasif_hdl(self):
+        return criterios.clasificar_hdl(self.hdl, self.paciente.sexo)
+
+    @property
+    def clasif_ldl(self):
+        return criterios.clasificar_ldl(self.ldl)
+
+    @property
+    def clasif_trigliceridos(self):
+        return criterios.clasificar_trigliceridos(self.trigliceridos)
+
+    @property
+    def colesterol_no_hdl(self):
+        if self.colesterol_total is None or self.hdl is None:
+            return None
+        return self.colesterol_total - self.hdl
+
+    @property
+    def clasif_colesterol_no_hdl(self):
+        return criterios.clasificar_colesterol_no_hdl(self.colesterol_no_hdl)
+
+    @property
+    def _dislipidemia_analisis(self):
+        return criterios.analizar_dislipidemia(
+            self.colesterol_total,
+            self.ldl,
+            self.hdl,
+            self.trigliceridos,
+            self.paciente.sexo,
+        )
+
+    @property
+    def clasif_dislipidemia(self):
+        a = self._dislipidemia_analisis
+        return a["label"] if a else None
+
+    @property
+    def clasif_dislipidemia_tipo(self):
+        a = self._dislipidemia_analisis
+        return a["tipo"] if a else None
+
+    @property
+    def sospecha_hipercolesterolemia_familiar(self):
+        return criterios.sospecha_hipercolesterolemia_familiar(self.ldl)
+
+    @property
+    def clasif_eritrocitosis(self):
+        return criterios.clasificar_eritrocitosis(
+            self.hemoglobina, self.paciente.sexo, self.paciente.es_altura
+        )
+
+    @property
+    def clasif_obesidad_abdominal(self):
+        return criterios.clasificar_obesidad_abdominal(
+            self.abdominal, self.paciente.sexo
+        )
+
+    @property
+    def clasif_glicemia_ayunas(self):
+        return criterios.clasificar_glicemia_ayunas(self.glucosa)
+
+    @property
+    def clasif_hb_a1c(self):
+        return criterios.clasificar_hb_a1c(self.hb_a1c)
+
+    @property
+    def clasif_presion(self):
+        return criterios.clasificar_presion(self.sistolica, self.diastolica)
+
 
 class AtencionNutricion(models.Model):
     paciente = models.ForeignKey(
@@ -122,3 +217,19 @@ class AtencionNutricion(models.Model):
 
     def __str__(self):
         return f"{self.paciente.nro_documento} - {self.fecha}"
+
+    @property
+    def clasif_imc(self):
+        return criterios.clasificar_imc(self.imc)
+
+    @property
+    def clasif_grasa_corporal(self):
+        return criterios.clasificar_grasa_corporal(self.grasa_corporal, self.paciente.sexo)
+
+    @property
+    def clasif_grasa_visceral(self):
+        return criterios.clasificar_grasa_visceral(self.grasa_visceral)
+
+    @property
+    def clasif_masa_muscular(self):
+        return criterios.clasificar_masa_muscular(self.masa_muscular, self.paciente.sexo)

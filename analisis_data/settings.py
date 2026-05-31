@@ -125,10 +125,29 @@ STATIC_URL = 'static/'
 # Unfold admin configuration
 # https://unfoldadmin.com/docs/configuration/settings/
 
+from django.urls import reverse_lazy  # noqa: E402  (necesario para SIDEBAR.link)
+
 UNFOLD = {
     "SITE_TITLE": "Análisis Data",
     "SITE_HEADER": "Análisis Data",
     "SITE_SUBHEADER": "Panel de administración",
     "SHOW_HISTORY": True,
     "SHOW_VIEW_ON_SITE": False,
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": True,
+        "navigation": [
+            {
+                "title": "Reportes",
+                "separator": True,
+                "items": [
+                    {
+                        "title": "Reporte clínico",
+                        "icon": "monitoring",
+                        "link": reverse_lazy("reportes_atenciones"),
+                    },
+                ],
+            },
+        ],
+    },
 }
