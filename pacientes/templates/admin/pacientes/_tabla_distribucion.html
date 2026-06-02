@@ -1,0 +1,42 @@
+{% comment %}
+Renderiza la tabla de distribución de categorías. Recibe:
+  - celdas: lista de dicts {categoria, n, pct, color}
+  - total: total con dato (si 0, muestra placeholders)
+{% endcomment %}
+<table class="w-full text-sm">
+    <thead>
+        <tr class="text-xs uppercase tracking-wider text-font-subtle-light dark:text-font-subtle-dark">
+            <th class="text-left pb-2 pr-3 font-medium">Categoría</th>
+            <th class="text-right pb-2 px-2 font-medium w-12">n</th>
+            <th class="text-left pb-2 pl-2 font-medium">Distribución</th>
+        </tr>
+    </thead>
+    <tbody class="divide-y divide-base-100 dark:divide-base-800/60">
+        {% for celda in celdas %}
+            <tr class="hover:bg-base-50 dark:hover:bg-base-800/40 transition-colors">
+                <td class="py-2 pr-3">
+                    <span class="inline-flex items-center gap-2">
+                        <span class="inline-block w-2.5 h-2.5 rounded-full ring-2 ring-white dark:ring-base-900" style="background-color: {{ celda.color }}"></span>
+                        <span class="text-sm">{{ celda.categoria }}</span>
+                    </span>
+                </td>
+                <td class="py-2 px-2 text-right">
+                    <span class="font-semibold text-base tabular-nums">{{ celda.n }}</span>
+                </td>
+                <td class="py-2 pl-2 min-w-[120px]">
+                    {% if total %}
+                        <div class="flex items-center gap-2">
+                            <div class="flex-1 h-2 bg-base-100 dark:bg-base-800 rounded-full overflow-hidden">
+                                <div class="h-full rounded-full transition-all"
+                                     style="width: {{ celda.pct|floatformat:1 }}%; background-color: {{ celda.color }}"></div>
+                            </div>
+                            <span class="text-xs font-medium tabular-nums text-font-subtle-light dark:text-font-subtle-dark min-w-[3rem] text-right">{{ celda.pct|floatformat:1 }}%</span>
+                        </div>
+                    {% else %}
+                        <span class="text-xs text-font-subtle-light dark:text-font-subtle-dark">—</span>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+    </tbody>
+</table>

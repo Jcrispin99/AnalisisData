@@ -112,15 +112,16 @@ class ClasificacionesTests(SimpleTestCase):
         self.assertEqual(c.clasificar_hb_a1c(6.5), "Diabetes")
 
     def test_presion(self):
-        self.assertEqual(c.clasificar_presion(110, 70), "Normal")
-        self.assertEqual(c.clasificar_presion(125, 70), "Presión elevada")
-        self.assertEqual(c.clasificar_presion(125, 80), "Hipertensión grado 1")
-        self.assertEqual(c.clasificar_presion(135, 85), "Hipertensión grado 1")
-        self.assertEqual(c.clasificar_presion(110, 85), "Hipertensión grado 1")
-        self.assertEqual(c.clasificar_presion(145, 95), "Hipertensión grado 2")
-        self.assertEqual(c.clasificar_presion(110, 95), "Hipertensión grado 2")
-        self.assertEqual(c.clasificar_presion(185, 95), "Crisis hipertensiva")
-        self.assertEqual(c.clasificar_presion(110, 125), "Crisis hipertensiva")
+        # Etiquetas literales del xlsx CRITERIOS DE ESTUDIO.
+        self.assertEqual(c.clasificar_presion(110, 70), "Normal Alta")
+        self.assertEqual(c.clasificar_presion(125, 70), "Elevada")
+        self.assertEqual(c.clasificar_presion(125, 80), "Hipertensión Grado 1")
+        self.assertEqual(c.clasificar_presion(135, 85), "Hipertensión Grado 1")
+        self.assertEqual(c.clasificar_presion(110, 85), "Hipertensión Grado 1")
+        self.assertEqual(c.clasificar_presion(145, 95), "Hipertensión Grado 2")
+        self.assertEqual(c.clasificar_presion(110, 95), "Hipertensión Grado 2")
+        self.assertEqual(c.clasificar_presion(185, 95), "Crisis Hipertensiva")
+        self.assertEqual(c.clasificar_presion(110, 125), "Crisis Hipertensiva")
         self.assertIsNone(c.clasificar_presion(None, None))
 
     def test_imc(self):

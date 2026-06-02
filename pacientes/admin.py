@@ -2,8 +2,10 @@ import io
 import unicodedata
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 from django import forms
+from django.conf import settings
 from django.contrib import admin, messages
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import render
@@ -111,8 +113,22 @@ class ExcelUploadForm(forms.Form):
     )
 
 
+def _blankish(value):
+    """True si la celda es None, vacía o contiene sólo whitespace.
+
+    Cubre espacio normal, tabs, saltos de línea y espacio duro (`\\xa0`).
+    Los Excel exportados desde sistemas clínicos a menudo rellenan nulos
+    con un único espacio en vez de dejar la celda realmente vacía.
+    """
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
 def _parse_date(value, month_first=False):
-    if value in (None, ""):
+    if _blankish(value):
         return None
     if isinstance(value, datetime):
         return value.date()
@@ -131,7 +147,7 @@ def _parse_date(value, month_first=False):
 
 
 def _parse_decimal(value):
-    if value in (None, ""):
+    if _blankish(value):
         return None
     try:
         return Decimal(str(value).strip().replace(",", "."))
@@ -233,83 +249,196 @@ def _buscar_paciente(dni, nombre, pacientes_by_norm):
     return matches[0], None
 
 
+def _diag_value(value):
+    """Devuelve una descripción detallada de un valor de celda Excel para diagnóstico.
+
+    Incluye tipo, repr, longitud (si es str) y los códigos Unicode de los
+    primeros 10 caracteres. Permite detectar espacios duros (`\\xa0`), apóstrofos
+    de texto, BOM, tabs, etc. en celdas que visualmente parecen vacías.
+    """
+    t = type(value).__name__
+    info = f"type={t} repr={value!r}"
+    if isinstance(value, str):
+        codes = [ord(c) for c in value[:10]]
+        info += f" len={len(value)} ord_first10={codes}"
+    return info
+
+
+class _ImportLog:
+    """Log por-subida para diagnosticar fallos de carga Excel.
+
+    Crea un archivo en `<BASE_DIR>/logs/import_<ts>_<modelo>.log` y guarda una
+    copia del archivo subido en `<BASE_DIR>/logs/uploads/<ts>_<nombre>`. Permite
+    pegar el log al técnico para que sepa exactamente qué celda rompió.
+    """
+
+    def __init__(self, archivo, modelo_label):
+        base = Path(settings.BASE_DIR)
+        logs_dir = base / "logs"
+        uploads_dir = logs_dir / "uploads"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        orig_name = getattr(archivo, "name", "upload.xlsx") or "upload.xlsx"
+        safe_name = "".join(
+            c if c.isalnum() or c in "._-" else "_" for c in orig_name
+        )[:80]
+
+        try:
+            archivo.seek(0)
+            raw_bytes = archivo.read()
+            archivo.seek(0)
+        except Exception:
+            raw_bytes = b""
+
+        self.upload_copy = uploads_dir / f"{ts}_{safe_name}"
+        if raw_bytes:
+            self.upload_copy.write_bytes(raw_bytes)
+
+        self.path = logs_dir / f"import_{ts}_{modelo_label}.log"
+        self._fh = open(self.path, "w", encoding="utf-8")
+        self.error_count = 0
+
+        self.write(f"=== Import {ts} ({modelo_label}) ===")
+        self.write(f"archivo: {orig_name}")
+        self.write(f"copia: {self.upload_copy}")
+        self.write(f"tamano_bytes: {len(raw_bytes)}")
+
+    def write(self, line):
+        self._fh.write(line + "\n")
+        self._fh.flush()
+
+    def headers(self, headers, field_to_col):
+        self.write("")
+        self.write("HEADERS encontrados (columna Excel -> header -> campo modelo):")
+        for col_letter, header, field in field_to_col:
+            self.write(f"  {col_letter}: {header!r} -> {field}")
+        self.write("")
+
+    def cell_error(self, row_num, field_name, col_letter, value, exc):
+        self.error_count += 1
+        cell_ref = f"{col_letter}{row_num}" if col_letter else f"fila {row_num}"
+        self.write(
+            f"ERROR cell={cell_ref} campo={field_name} | {_diag_value(value)} | excepcion={exc}"
+        )
+
+    def row_error(self, row_num, msg):
+        self.error_count += 1
+        self.write(f"ERROR fila {row_num} | {msg}")
+
+    def summary(self, creados, actualizados, errores):
+        self.write("")
+        self.write(
+            f"=== Resumen: creados={creados} actualizados={actualizados} "
+            f"errores={len(errores)} ==="
+        )
+
+    def close(self):
+        try:
+            self._fh.close()
+        except Exception:
+            pass
+
+
 def _procesar_excel_atenciones(archivo, model, columns):
     """Upsert masivo de atenciones a partir de un xlsx con la plantilla dada.
 
     Vincula al paciente por Nombre Completo o DNI (ver `_buscar_paciente`).
     Clave natural del upsert: (paciente, fecha). Devuelve (creados, actualizados, errores).
     """
-    wb = openpyxl.load_workbook(archivo, data_only=True)
-    ws = wb.active
-
-    rows = ws.iter_rows(values_only=True)
-    headers = next(rows, None)
-    if not headers:
-        raise ValueError("El archivo está vacío.")
-
-    label_to_field = {label: field for field, label in columns}
+    log = _ImportLog(archivo, model._meta.model_name)
     try:
-        field_order = [label_to_field[h] for h in headers if h is not None]
-    except KeyError as exc:
-        raise ValueError(
-            f"Columna desconocida: {exc.args[0]!r}. Use la plantilla descargada."
-        ) from exc
+        wb = openpyxl.load_workbook(archivo, data_only=True)
+        ws = wb.active
 
-    decimal_fields = {f for f, _ in columns} - PACIENTE_LOOKUP_FIELDS - {"fecha"}
+        rows = ws.iter_rows(values_only=True)
+        headers = next(rows, None)
+        if not headers:
+            log.write("FATAL: archivo vacío")
+            raise ValueError("El archivo está vacío.")
 
-    pacientes_by_norm = _build_pacientes_index()
+        label_to_field = {label: field for field, label in columns}
+        field_order = []
+        col_letters = []
+        header_field_pairs = []
+        for col_idx, h in enumerate(headers, start=1):
+            if h is None:
+                continue
+            if h not in label_to_field:
+                log.write(f"FATAL: columna desconocida {h!r} en {get_column_letter(col_idx)}")
+                raise ValueError(
+                    f"Columna desconocida: {h!r}. Use la plantilla descargada."
+                )
+            f = label_to_field[h]
+            field_order.append(f)
+            col_letters.append(get_column_letter(col_idx))
+            header_field_pairs.append((get_column_letter(col_idx), h, f))
 
-    creados = actualizados = 0
-    errores = []
+        log.headers(headers, header_field_pairs)
 
-    for row_num, row in enumerate(rows, start=2):
-        if not row or not any(cell not in (None, "") for cell in row):
-            continue
+        decimal_fields = {f for f, _ in columns} - PACIENTE_LOOKUP_FIELDS - {"fecha"}
 
-        data = {}
-        row_ok = True
-        for field_name, value in zip(field_order, row):
-            if field_name == "fecha":
-                try:
-                    data["fecha"] = _parse_date(value)
-                except ValueError as exc:
-                    errores.append(f"Fila {row_num} (Fecha): {exc}")
-                    row_ok = False
-                    break
-            elif field_name in PACIENTE_LOOKUP_FIELDS:
-                data[field_name] = "" if value is None else str(value).strip()
-            elif field_name in decimal_fields:
-                try:
-                    data[field_name] = _parse_decimal(value)
-                except ValueError as exc:
-                    errores.append(f"Fila {row_num} ({field_name}): {exc}")
-                    row_ok = False
-                    break
+        pacientes_by_norm = _build_pacientes_index()
 
-        if not row_ok:
-            continue
+        creados = actualizados = 0
+        errores = []
 
-        dni = data.pop("dni", "")
-        nombre = data.pop("nombre_completo", "")
-        paciente, error = _buscar_paciente(dni, nombre, pacientes_by_norm)
-        if error:
-            errores.append(f"Fila {row_num}: {error}")
-            continue
+        for row_num, row in enumerate(rows, start=2):
+            if not row or all(_blankish(cell) for cell in row):
+                continue
 
-        fecha = data.pop("fecha", None)
-        if not fecha:
-            errores.append(f"Fila {row_num}: 'Fecha' vacía, fila omitida.")
-            continue
+            data = {}
+            row_ok = True
+            for field_name, col_letter, value in zip(field_order, col_letters, row):
+                if field_name == "fecha":
+                    try:
+                        data["fecha"] = _parse_date(value)
+                    except ValueError as exc:
+                        errores.append(f"Fila {row_num} (Fecha): {exc}")
+                        log.cell_error(row_num, "fecha", col_letter, value, exc)
+                        row_ok = False
+                        break
+                elif field_name in PACIENTE_LOOKUP_FIELDS:
+                    data[field_name] = "" if value is None else str(value).strip()
+                elif field_name in decimal_fields:
+                    try:
+                        data[field_name] = _parse_decimal(value)
+                    except ValueError as exc:
+                        errores.append(f"Fila {row_num} ({field_name}): {exc}")
+                        log.cell_error(row_num, field_name, col_letter, value, exc)
+                        row_ok = False
+                        break
 
-        _, created = model.objects.update_or_create(
-            paciente=paciente, fecha=fecha, defaults=data
-        )
-        if created:
-            creados += 1
-        else:
-            actualizados += 1
+            if not row_ok:
+                continue
 
-    return creados, actualizados, errores
+            dni = data.pop("dni", "")
+            nombre = data.pop("nombre_completo", "")
+            paciente, error = _buscar_paciente(dni, nombre, pacientes_by_norm)
+            if error:
+                errores.append(f"Fila {row_num}: {error}")
+                log.row_error(row_num, error)
+                continue
+
+            fecha = data.pop("fecha", None)
+            if not fecha:
+                errores.append(f"Fila {row_num}: 'Fecha' vacía, fila omitida.")
+                log.row_error(row_num, "'Fecha' vacía, fila omitida.")
+                continue
+
+            _, created = model.objects.update_or_create(
+                paciente=paciente, fecha=fecha, defaults=data
+            )
+            if created:
+                creados += 1
+            else:
+                actualizados += 1
+
+        log.summary(creados, actualizados, errores)
+        return creados, actualizados, errores, log.path
+    finally:
+        log.close()
 
 
 @admin.register(Paciente)
@@ -365,7 +494,7 @@ class PacienteAdmin(ModelAdmin):
             form = ExcelUploadForm(request.POST, request.FILES)
             if form.is_valid():
                 try:
-                    creados, actualizados, errores = self._procesar_excel(
+                    creados, actualizados, errores, log_path = self._procesar_excel(
                         form.cleaned_data["archivo"]
                     )
                 except Exception as exc:
@@ -377,6 +506,7 @@ class PacienteAdmin(ModelAdmin):
                 if len(errores) > 10:
                     messages.warning(request, f"... y {len(errores) - 10} errores más.")
 
+                messages.info(request, f"Log detallado: {log_path}")
                 messages.success(
                     request,
                     f"Carga completa. Creados: {creados}, actualizados: {actualizados}, "
@@ -401,76 +531,97 @@ class PacienteAdmin(ModelAdmin):
         return render(request, "admin/pacientes/subir_excel.html", context)
 
     def _procesar_excel(self, archivo):
-        wb = openpyxl.load_workbook(archivo, data_only=True)
-        ws = wb.active
-
-        rows = ws.iter_rows(values_only=True)
-        headers = next(rows, None)
-        if not headers:
-            raise ValueError("El archivo está vacío.")
-
-        label_to_field = {label: field for field, label in EXCEL_COLUMNS}
+        log = _ImportLog(archivo, "paciente")
         try:
-            field_order = [label_to_field[h] for h in headers if h is not None]
-        except KeyError as exc:
-            raise ValueError(
-                f"Columna desconocida: {exc.args[0]!r}. Use la plantilla descargada."
-            ) from exc
+            wb = openpyxl.load_workbook(archivo, data_only=True)
+            ws = wb.active
 
-        creados = actualizados = 0
-        errores = []
+            rows = ws.iter_rows(values_only=True)
+            headers = next(rows, None)
+            if not headers:
+                log.write("FATAL: archivo vacío")
+                raise ValueError("El archivo está vacío.")
 
-        for row_num, row in enumerate(rows, start=2):
-            if not row or not any(cell not in (None, "") for cell in row):
-                continue
+            label_to_field = {label: field for field, label in EXCEL_COLUMNS}
+            field_order = []
+            col_letters = []
+            header_field_pairs = []
+            for col_idx, h in enumerate(headers, start=1):
+                if h is None:
+                    continue
+                if h not in label_to_field:
+                    log.write(f"FATAL: columna desconocida {h!r} en {get_column_letter(col_idx)}")
+                    raise ValueError(
+                        f"Columna desconocida: {h!r}. Use la plantilla descargada."
+                    )
+                f = label_to_field[h]
+                field_order.append(f)
+                col_letters.append(get_column_letter(col_idx))
+                header_field_pairs.append((get_column_letter(col_idx), h, f))
 
-            data = {}
-            row_ok = True
-            for field_name, value in zip(field_order, row):
-                if field_name in DATE_FIELDS:
-                    try:
-                        data[field_name] = _parse_date(
-                            value, month_first=(field_name == "fec_nacimiento")
-                        )
-                    except ValueError as exc:
-                        errores.append(f"Fila {row_num} ({field_name}): {exc}")
-                        row_ok = False
-                        break
-                elif field_name in CHOICE_NORMALIZERS:
-                    if value in (None, ""):
-                        data[field_name] = ""
-                    else:
-                        normalized = _normalize_name(value)
-                        key = CHOICE_NORMALIZERS[field_name].get(normalized)
-                        if key is None:
-                            errores.append(
-                                f"Fila {row_num} ({field_name}): valor {str(value)!r} no reconocido, "
-                                f"esperado uno de {sorted(set(CHOICE_NORMALIZERS[field_name].values()))}."
+            log.headers(headers, header_field_pairs)
+
+            creados = actualizados = 0
+            errores = []
+
+            for row_num, row in enumerate(rows, start=2):
+                if not row or all(_blankish(cell) for cell in row):
+                    continue
+
+                data = {}
+                row_ok = True
+                for field_name, col_letter, value in zip(field_order, col_letters, row):
+                    if field_name in DATE_FIELDS:
+                        try:
+                            data[field_name] = _parse_date(
+                                value, month_first=(field_name == "fec_nacimiento")
                             )
+                        except ValueError as exc:
+                            errores.append(f"Fila {row_num} ({field_name}): {exc}")
+                            log.cell_error(row_num, field_name, col_letter, value, exc)
                             row_ok = False
                             break
-                        data[field_name] = key
+                    elif field_name in CHOICE_NORMALIZERS:
+                        if _blankish(value):
+                            data[field_name] = ""
+                        else:
+                            normalized = _normalize_name(value)
+                            key = CHOICE_NORMALIZERS[field_name].get(normalized)
+                            if key is None:
+                                msg = (
+                                    f"valor {str(value)!r} no reconocido, "
+                                    f"esperado uno de {sorted(set(CHOICE_NORMALIZERS[field_name].values()))}."
+                                )
+                                errores.append(f"Fila {row_num} ({field_name}): {msg}")
+                                log.cell_error(row_num, field_name, col_letter, value, msg)
+                                row_ok = False
+                                break
+                            data[field_name] = key
+                    else:
+                        data[field_name] = "" if value is None else str(value).strip()
+
+                if not row_ok:
+                    continue
+
+                id_rh = data.get("id_rh", "").strip()
+                if not id_rh:
+                    errores.append(f"Fila {row_num}: 'Id RH' vacío, fila omitida.")
+                    log.row_error(row_num, "'Id RH' vacío, fila omitida.")
+                    continue
+
+                data.pop("id_rh")
+                _, created = Paciente.objects.update_or_create(
+                    id_rh=id_rh, defaults=data
+                )
+                if created:
+                    creados += 1
                 else:
-                    data[field_name] = "" if value is None else str(value).strip()
+                    actualizados += 1
 
-            if not row_ok:
-                continue
-
-            id_rh = data.get("id_rh", "").strip()
-            if not id_rh:
-                errores.append(f"Fila {row_num}: 'Id RH' vacío, fila omitida.")
-                continue
-
-            data.pop("id_rh")
-            _, created = Paciente.objects.update_or_create(
-                id_rh=id_rh, defaults=data
-            )
-            if created:
-                creados += 1
-            else:
-                actualizados += 1
-
-        return creados, actualizados, errores
+            log.summary(creados, actualizados, errores)
+            return creados, actualizados, errores, log.path
+        finally:
+            log.close()
 
 
 class _AtencionImportExportMixin:
@@ -504,7 +655,7 @@ class _AtencionImportExportMixin:
             form = ExcelUploadForm(request.POST, request.FILES)
             if form.is_valid():
                 try:
-                    creados, actualizados, errores = _procesar_excel_atenciones(
+                    creados, actualizados, errores, log_path = _procesar_excel_atenciones(
                         form.cleaned_data["archivo"], self.model, self.import_columns
                     )
                 except Exception as exc:
@@ -516,6 +667,7 @@ class _AtencionImportExportMixin:
                 if len(errores) > 10:
                     messages.warning(request, f"... y {len(errores) - 10} errores más.")
 
+                messages.info(request, f"Log detallado: {log_path}")
                 messages.success(
                     request,
                     f"Carga completa. Creados: {creados}, actualizados: {actualizados}, "

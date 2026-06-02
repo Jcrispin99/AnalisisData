@@ -13,12 +13,41 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from datetime import date
+from typing import NamedTuple
 
 from django.db.models import Count
 from django.db.models.functions import ExtractYear
 
 from . import umbrales as u
 from .models import Atencion, AtencionNutricion
+
+
+class FilaDef(NamedTuple):
+    clave: str
+    label: str
+    prop: str
+    cats: list
+    by_sex: bool = False  # True si el criterio tiene umbrales distintos por sexo
+
+
+# Categorías consideradas "saludables" por criterio (lo demás se cuenta como alterado).
+CATEGORIAS_BUENAS = {
+    "dislipidemia_global": {"Normal"},
+    "colesterol_total": {"Deseable"},
+    "hdl": {"Deseable"},
+    "ldl": {"Deseable"},
+    "trigliceridos": {"Deseable"},
+    "colesterol_no_hdl": {"Deseable"},
+    "eritrocitosis": {"Normal"},
+    "obesidad_abdominal": {"Normal"},
+    "glicemia": {"Normal"},
+    "hb_a1c": {"Normal"},
+    "presion": {"Normal Alta"},
+    "imc": {"Normal"},
+    "grasa_corporal": {"Saludable", "Aceptable"},
+    "grasa_visceral": {"Saludable"},
+    "masa_muscular": {"Normal", "Alto", "Muy alto"},
+}
 
 
 CATEGORIAS = {
@@ -55,11 +84,11 @@ CATEGORIAS = {
     ],
     "diabetes": ["Normal", "Prediabetes", "Diabetes"],
     "hta": [
-        "Normal",
-        "Presión elevada",
-        "Hipertensión grado 1",
-        "Hipertensión grado 2",
-        "Crisis hipertensiva",
+        "Normal Alta",
+        "Elevada",
+        "Hipertensión Grado 1",
+        "Hipertensión Grado 2",
+        "Crisis Hipertensiva",
     ],
     "imc": [
         "Bajo peso",
@@ -74,19 +103,20 @@ CATEGORIAS = {
     "masa_muscular": ["Bajo", "Normal", "Alto", "Muy alto"],
 }
 
-# (clave, etiqueta, property, categorías)
+# by_sex=True cuando el criterio tiene umbrales distintos para varones y mujeres
+# (ver umbrales.py — CriterioPorSexo).
 FILAS = [
-    ("dislipidemia_global", "Diagnóstico de dislipidemia", "clasif_dislipidemia_tipo", CATEGORIAS["dislipidemia_global"]),
-    ("colesterol_total", "Colesterol Total", "clasif_colesterol_total", CATEGORIAS["dislipidemias"]),
-    ("hdl", "HDL Colesterol", "clasif_hdl", CATEGORIAS["dislipidemias"]),
-    ("ldl", "LDL Colesterol", "clasif_ldl", CATEGORIAS["dislipidemias"]),
-    ("trigliceridos", "Triglicéridos", "clasif_trigliceridos", CATEGORIAS["dislipidemias"]),
-    ("colesterol_no_hdl", "Colesterol no-HDL", "clasif_colesterol_no_hdl", CATEGORIAS["colesterol_no_hdl"]),
-    ("eritrocitosis", "Eritrocitosis (Hb)", "clasif_eritrocitosis", CATEGORIAS["eritrocitosis"]),
-    ("obesidad_abdominal", "Obesidad abdominal", "clasif_obesidad_abdominal", CATEGORIAS["obesidad_abdominal"]),
-    ("glicemia", "Glicemia en ayunas", "clasif_glicemia_ayunas", CATEGORIAS["diabetes"]),
-    ("hb_a1c", "Hemoglobina glicosilada", "clasif_hb_a1c", CATEGORIAS["diabetes"]),
-    ("presion", "Presión arterial", "clasif_presion", CATEGORIAS["hta"]),
+    FilaDef("dislipidemia_global", "Diagnóstico de dislipidemia", "clasif_dislipidemia_tipo", CATEGORIAS["dislipidemia_global"]),
+    FilaDef("colesterol_total", "Colesterol Total", "clasif_colesterol_total", CATEGORIAS["dislipidemias"]),
+    FilaDef("hdl", "HDL Colesterol", "clasif_hdl", CATEGORIAS["dislipidemias"], by_sex=True),
+    FilaDef("ldl", "LDL Colesterol", "clasif_ldl", CATEGORIAS["dislipidemias"]),
+    FilaDef("trigliceridos", "Triglicéridos", "clasif_trigliceridos", CATEGORIAS["dislipidemias"]),
+    FilaDef("colesterol_no_hdl", "Colesterol no-HDL", "clasif_colesterol_no_hdl", CATEGORIAS["colesterol_no_hdl"]),
+    FilaDef("eritrocitosis", "Eritrocitosis (Hb)", "clasif_eritrocitosis", CATEGORIAS["eritrocitosis"], by_sex=True),
+    FilaDef("obesidad_abdominal", "Obesidad abdominal", "clasif_obesidad_abdominal", CATEGORIAS["obesidad_abdominal"], by_sex=True),
+    FilaDef("glicemia", "Glicemia en ayunas", "clasif_glicemia_ayunas", CATEGORIAS["diabetes"]),
+    FilaDef("hb_a1c", "Hemoglobina glicosilada", "clasif_hb_a1c", CATEGORIAS["diabetes"]),
+    FilaDef("presion", "Presión arterial", "clasif_presion", CATEGORIAS["hta"]),
 ]
 
 SECCIONES = [
@@ -101,10 +131,10 @@ SECCIONES = [
 ]
 
 FILAS_NUTRICION = [
-    ("imc", "IMC", "clasif_imc", CATEGORIAS["imc"]),
-    ("grasa_corporal", "% Grasa corporal", "clasif_grasa_corporal", CATEGORIAS["grasa_corporal"]),
-    ("grasa_visceral", "Grasa visceral", "clasif_grasa_visceral", CATEGORIAS["grasa_visceral"]),
-    ("masa_muscular", "% Masa muscular", "clasif_masa_muscular", CATEGORIAS["masa_muscular"]),
+    FilaDef("imc", "IMC", "clasif_imc", CATEGORIAS["imc"]),
+    FilaDef("grasa_corporal", "% Grasa corporal", "clasif_grasa_corporal", CATEGORIAS["grasa_corporal"], by_sex=True),
+    FilaDef("grasa_visceral", "Grasa visceral", "clasif_grasa_visceral", CATEGORIAS["grasa_visceral"]),
+    FilaDef("masa_muscular", "% Masa muscular", "clasif_masa_muscular", CATEGORIAS["masa_muscular"], by_sex=True),
 ]
 
 _MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun",
@@ -132,15 +162,21 @@ def _color_para(cats, i):
 _p = u.PRESION
 _TOOLTIP_DISLIPIDEMIA_GLOBAL = (
     "<p class='font-semibold mb-1'>Diagnóstico combinado del perfil lipídico</p>"
-    "<p class='text-font-subtle-light dark:text-font-subtle-dark mb-1.5'>Combina CT, LDL, HDL y TG:</p>"
+    "<p class='text-font-subtle-light dark:text-font-subtle-dark mb-1.5'>"
+    "Categorías <b>mutuamente excluyentes</b> (cada paciente cae en una sola). Combina CT, LDL, HDL y TG:"
+    "</p>"
     "<ul class='list-disc pl-4 space-y-0.5'>"
     "<li><b>Normal:</b> los 4 valores en rango deseable</li>"
-    "<li><b>HDL bajo aislado:</b> solo HDL bajo</li>"
-    "<li><b>Hipercolesterolemia:</b> CT/LDL alto, TG normal</li>"
-    "<li><b>Hipertrigliceridemia:</b> solo TG alto</li>"
-    "<li><b>Dislipidemia mixta:</b> colesterol + TG altos</li>"
-    "<li><b>Aterogénica:</b> TG altos + HDL bajo</li>"
+    "<li><b>HDL bajo aislado:</b> solo HDL bajo (CT, LDL y TG normales)</li>"
+    "<li><b>Hipercolesterolemia:</b> CT y/o LDL alto, con TG normal</li>"
+    "<li><b>Hipertrigliceridemia:</b> TG alto <b>aislado</b> (CT, LDL y HDL normales)</li>"
+    "<li><b>Dislipidemia mixta:</b> CT/LDL altos <b>+</b> TG altos (HDL normal)</li>"
+    "<li><b>Aterogénica:</b> TG altos <b>+</b> HDL bajo (prevalece sobre mixta)</li>"
     "</ul>"
+    "<p class='mt-1.5 text-font-subtle-light dark:text-font-subtle-dark'>"
+    "Por eso un paciente con TG alto puede no contar como “Hipertrigliceridemia”: "
+    "si además tiene CT/LDL alto cuenta como mixta, y si tiene HDL bajo cuenta como aterogénica."
+    "</p>"
     "<p class='mt-1.5 text-font-subtle-light dark:text-font-subtle-dark'>"
     f"Severidad = peor componente alterado. Bandera ⚠ si LDL ≥{u.LDL_UMBRAL_HF} (sospecha "
     "hipercolesterolemia familiar — ACC/AHA)."
@@ -153,11 +189,11 @@ _TOOLTIP_PRESION = (
     "Fuente: CRITERIOS DE ESTUDIO. Se toma la categoría más severa entre sistólica y diastólica."
     "</p>"
     "<ul class='list-disc pl-4 space-y-0.5'>"
-    f"<li>Normal: &lt;{_p['elevada_s_min']} <b>y</b> &lt;{_p['elevada_d_max']}</li>"
+    f"<li>Normal Alta: &lt;{_p['elevada_s_min']} <b>y</b> &lt;{_p['elevada_d_max']}</li>"
     f"<li>Elevada: {_p['elevada_s_min']}-{_p['elevada_s_max']} <b>y</b> &lt;{_p['elevada_d_max']}</li>"
-    f"<li>Grado 1: {_p['g1_s_min']}-{_p['g1_s_max']} <b>ó</b> {_p['g1_d_min']}-{_p['g1_d_max']}</li>"
-    f"<li>Grado 2: ≥{_p['g2_s']} <b>ó</b> ≥{_p['g2_d']}</li>"
-    f"<li>Crisis: ≥{_p['crisis_s']} <b>y/o</b> ≥{_p['crisis_d']}</li>"
+    f"<li>Hipertensión Grado 1: {_p['g1_s_min']}-{_p['g1_s_max']} <b>ó</b> {_p['g1_d_min']}-{_p['g1_d_max']}</li>"
+    f"<li>Hipertensión Grado 2: ≥{_p['g2_s']} <b>ó</b> ≥{_p['g2_d']}</li>"
+    f"<li>Crisis Hipertensiva: ≥{_p['crisis_s']} <b>y/o</b> ≥{_p['crisis_d']}</li>"
     "</ul>"
 )
 
@@ -254,11 +290,36 @@ def _bins_y_keyfn(year, fechas):
     return bins, labels, lambda at: (at.fecha.year, at.fecha.month)
 
 
+def _construir_celdas(counter, cats):
+    """Genera celdas (categoria/n/pct/color) y total con dato a partir de un Counter."""
+    total_con_dato = sum(counter.values())
+    celdas = []
+    for i, cat in enumerate(cats):
+        n = counter.get(cat, 0)
+        pct = (n / total_con_dato * 100) if total_con_dato else 0
+        celdas.append({
+            "categoria": cat,
+            "n": n,
+            "pct": pct,
+            "color": _color_para(cats, i),
+        })
+    return celdas, total_con_dato
+
+
+def _pct_alterado(celdas, total_con_dato, buenas):
+    """% de categoría 'alterada' (no en el set de categorías buenas)."""
+    if not total_con_dato:
+        return 0
+    alt = sum(c["n"] for c in celdas if c["categoria"] not in buenas)
+    return alt / total_con_dato * 100
+
+
 def _resumen(qs, filas_def, year):
     """Cuenta atenciones por categoría y por bin temporal.
 
-    Devuelve (total, filas_dict). Cada fila incluye `celdas` (tabla) y `serie`
-    (datasets para Chart.js).
+    Devuelve (total, filas_dict). Cada fila incluye `celdas` (tabla), `serie`
+    (datasets para Chart.js) y `pct_alterado`. Si `by_sex=True`, además expone
+    `por_sexo` con sub-tablas separadas para varones y mujeres.
     """
     atenciones = list(qs)
     total = len(atenciones)
@@ -266,51 +327,149 @@ def _resumen(qs, filas_def, year):
     bins, bin_labels, key_fn = _bins_y_keyfn(year, fechas)
 
     # counters[clave][cat] = total ; series[clave][cat][bin] = n
-    counters = {clave: Counter() for clave, *_ in filas_def}
-    series = {clave: defaultdict(lambda: defaultdict(int)) for clave, *_ in filas_def}
+    counters = {f.clave: Counter() for f in filas_def}
+    series = {f.clave: defaultdict(lambda: defaultdict(int)) for f in filas_def}
+    # counters_sex[clave][sexo][cat] solo se llena para filas by_sex
+    counters_sex = {
+        f.clave: {"M": Counter(), "F": Counter()} for f in filas_def if f.by_sex
+    }
+    sin_sexo_count = 0  # atenciones cuyo paciente no tiene sexo registrado
 
     for at in atenciones:
         b = key_fn(at)
-        for clave, _label, prop, _cats in filas_def:
-            valor = getattr(at, prop)
+        sexo = at.paciente.sexo if at.paciente.sexo in ("M", "F") else None
+        if sexo is None:
+            sin_sexo_count += 1
+        for f in filas_def:
+            valor = getattr(at, f.prop)
             if valor:
-                counters[clave][valor] += 1
-                series[clave][valor][b] += 1
+                counters[f.clave][valor] += 1
+                series[f.clave][valor][b] += 1
+                if f.by_sex and sexo:
+                    counters_sex[f.clave][sexo][valor] += 1
 
     filas = {}
-    for clave, label, _prop, cats in filas_def:
-        counter = counters[clave]
-        total_con_dato = sum(counter.values())
-        celdas = []
-        for i, cat in enumerate(cats):
-            n = counter.get(cat, 0)
-            pct = (n / total_con_dato * 100) if total_con_dato else 0
-            celdas.append({
-                "categoria": cat,
-                "n": n,
-                "pct": pct,
-                "color": _color_para(cats, i),
-            })
+    for f in filas_def:
+        celdas, total_con_dato = _construir_celdas(counters[f.clave], f.cats)
+        buenas = CATEGORIAS_BUENAS.get(f.clave, set())
+        pct_alterado = _pct_alterado(celdas, total_con_dato, buenas)
 
         datasets = [
             {
                 "label": cat,
-                "data": [series[clave][cat].get(b, 0) for b in bins],
-                "color": _color_para(cats, i),
+                "data": [series[f.clave][cat].get(b, 0) for b in bins],
+                "color": _color_para(f.cats, i),
             }
-            for i, cat in enumerate(cats)
+            for i, cat in enumerate(f.cats)
         ]
-        filas[clave] = {
-            "clave": clave,
-            "label": label,
-            "categorias": cats,
+        fila = {
+            "clave": f.clave,
+            "label": f.label,
+            "categorias": f.cats,
             "celdas": celdas,
             "total_con_dato": total_con_dato,
             "sin_dato": total - total_con_dato,
+            "pct_alterado": pct_alterado,
             "serie": {"labels": bin_labels, "datasets": datasets},
-            "tooltip": TOOLTIPS.get(clave, ""),
+            "tooltip": TOOLTIPS.get(f.clave, ""),
+            "by_sex": f.by_sex,
         }
+
+        if f.by_sex:
+            por_sexo = {}
+            for sx in ("M", "F"):
+                celdas_sx, total_sx = _construir_celdas(counters_sex[f.clave][sx], f.cats)
+                por_sexo[sx] = {
+                    "celdas": celdas_sx,
+                    "total_con_dato": total_sx,
+                    "pct_alterado": _pct_alterado(celdas_sx, total_sx, buenas),
+                }
+            fila["por_sexo"] = por_sexo
+            fila["sin_sexo"] = sin_sexo_count
+
+        filas[f.clave] = fila
     return total, filas
+
+
+def _calcular_kpis(filas_clinico, total_clinico):
+    """KPIs gerenciales — sintetizados de las filas ya calculadas para evitar
+    re-iterar atenciones. Cada KPI: clave, label, n, pct, hint."""
+    def pct(n):
+        return (n / total_clinico * 100) if total_clinico else 0
+
+    def alterados(clave):
+        fila = filas_clinico.get(clave)
+        if not fila:
+            return 0
+        buenas = CATEGORIAS_BUENAS.get(clave, set())
+        return sum(c["n"] for c in fila["celdas"] if c["categoria"] not in buenas)
+
+    hta_alt = alterados("presion") - sum(
+        c["n"] for c in filas_clinico["presion"]["celdas"]
+        if c["categoria"] == "Elevada"
+    )  # excluye "Elevada" para HTA Grado 1+
+    diab = sum(
+        c["n"] for c in filas_clinico.get("glicemia", {}).get("celdas", [])
+        if c["categoria"] == "Diabetes"
+    ) + sum(
+        c["n"] for c in filas_clinico.get("hb_a1c", {}).get("celdas", [])
+        if c["categoria"] == "Diabetes"
+    )
+    prediab = sum(
+        c["n"] for c in filas_clinico.get("glicemia", {}).get("celdas", [])
+        if c["categoria"] == "Prediabetes"
+    )
+
+    return [
+        {"clave": "total", "label": "Atenciones del periodo", "n": total_clinico,
+         "pct": None, "es_total": True, "hint": "Población base del reporte"},
+        {"clave": "dislipidemia", "label": "Con dislipidemia",
+         "n": alterados("dislipidemia_global"),
+         "pct": pct(alterados("dislipidemia_global")),
+         "hint": "Cualquier perfil lipídico distinto de Normal"},
+        {"clave": "hta", "label": "HTA Grado 1 o más",
+         "n": hta_alt, "pct": pct(hta_alt),
+         "hint": "Hipertensión confirmada (excluye «Elevada»)"},
+        {"clave": "obesidad", "label": "Obesidad abdominal",
+         "n": alterados("obesidad_abdominal"),
+         "pct": pct(alterados("obesidad_abdominal")),
+         "hint": "Perímetro abdominal en Grado 1 o 2"},
+        {"clave": "diabetes", "label": "Diabetes o prediabetes",
+         "n": diab + prediab, "pct": pct(diab + prediab),
+         "hint": f"Diabetes: {diab} · Prediabetes: {prediab}"},
+    ]
+
+
+def _generar_insights(filas_clinico, filas_nutri):
+    """Detecta diferencias notables M vs F en criterios sex-dependientes.
+
+    Criterio: ambos sexos con n >= 20 y diferencia en % alterado >= 10pp.
+    Devuelve hasta los 3 insights más fuertes.
+    """
+    insights = []
+    for source in (filas_clinico, filas_nutri):
+        for clave, fila in source.items():
+            if not fila.get("by_sex"):
+                continue
+            ps = fila["por_sexo"]
+            n_m, n_f = ps["M"]["total_con_dato"], ps["F"]["total_con_dato"]
+            if n_m < 20 or n_f < 20:
+                continue
+            pct_m, pct_f = ps["M"]["pct_alterado"], ps["F"]["pct_alterado"]
+            diff = abs(pct_m - pct_f)
+            if diff < 10:
+                continue
+            mayor = "mujeres" if pct_f > pct_m else "varones"
+            menor = "varones" if pct_f > pct_m else "mujeres"
+            insights.append({
+                "criterio": fila["label"],
+                "mayor": mayor, "menor": menor,
+                "pct_mayor": max(pct_m, pct_f),
+                "pct_menor": min(pct_m, pct_f),
+                "diff": diff,
+            })
+    insights.sort(key=lambda x: -x["diff"])
+    return insights[:3]
 
 
 def reporte_atenciones(year=None, convenio=None, area=None, sexo=None):
@@ -341,7 +500,12 @@ def reporte_atenciones(year=None, convenio=None, area=None, sexo=None):
             }
         )
 
-    return {"pestañas": pestañas}
+    return {
+        "pestañas": pestañas,
+        "kpis": _calcular_kpis(filas_clinico, total_clinico),
+        "insights": _generar_insights(filas_clinico, filas_nutri),
+        "total_clinico": total_clinico,
+    }
 
 
 def distribucion_atenciones_por_año():

@@ -171,16 +171,16 @@ def clasificar_presion(sistolica: Numeric, diastolica: Numeric) -> Optional[str]
     p = u.PRESION
 
     if (s is not None and s >= p["crisis_s"]) or (d is not None and d >= p["crisis_d"]):
-        return "Crisis hipertensiva"
+        return "Crisis Hipertensiva"
     if (s is not None and s >= p["g2_s"]) or (d is not None and d >= p["g2_d"]):
-        return "Hipertensión grado 2"
+        return "Hipertensión Grado 2"
     if (s is not None and p["g1_s_min"] <= s <= p["g1_s_max"]) or \
        (d is not None and p["g1_d_min"] <= d <= p["g1_d_max"]):
-        return "Hipertensión grado 1"
+        return "Hipertensión Grado 1"
     if s is not None and p["elevada_s_min"] <= s <= p["elevada_s_max"] and \
        (d is None or d < p["elevada_d_max"]):
-        return "Presión elevada"
-    return "Normal"
+        return "Elevada"
+    return "Normal Alta"
 
 
 # ----- COMPOSICIÓN CORPORAL (Opción A: referencias estándar) -----

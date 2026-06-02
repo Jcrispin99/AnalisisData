@@ -31,6 +31,8 @@ def reporte_atenciones_view(request):
         **admin.site.each_context(request),
         "title": "Reporte clínico de atenciones",
         "data": data,
+        "kpis": data.get("kpis", []),
+        "insights": data.get("insights", []),
         "chart_data": chart_data,
         "filtros": filtros,
         "años": reportes.años_disponibles(),

@@ -25,7 +25,20 @@ SECRET_KEY = 'django-insecure-hpchs#x9^q)5-dwe3z)azwndky(-c%q9)h84b+pcohp@k=y_=l
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    "192.168.1.187",   # IP de la Mac en la red local — ajustar si cambia
+    "Mac.local",       # acceso por hostname mDNS desde otras Macs de la red
+]
+
+# Django 4+ exige listar orígenes confiables para POSTs cross-origin (incluye admin).
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://192.168.1.187:8000",
+    "http://Mac.local:8000",
+]
 
 
 # Application definition
