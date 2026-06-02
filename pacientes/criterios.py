@@ -204,3 +204,52 @@ def clasificar_grasa_visceral(valor: Numeric) -> Optional[str]:
 
 def clasificar_masa_muscular(valor: Numeric, sexo: Optional[str]) -> Optional[str]:
     return clasificar_por_sexo(valor, sexo, u.MASA_MUSCULAR)
+
+
+# Categorías "saludables" por cada clasificación que aporta al SM. Si la
+# clasificación cae fuera de este set, el componente cuenta como alterado.
+_SM_BUENAS = {
+    "obesidad_abdominal": {"Normal"},
+    "hdl": {"Deseable"},
+    "trigliceridos": {"Deseable"},
+    "glicemia": {"Normal"},
+    "presion": {"Normal Alta"},
+}
+
+
+def clasificar_sindrome_metabolico(
+    abdominal: Numeric,
+    sexo: Optional[str],
+    hdl: Numeric,
+    trigliceridos: Numeric,
+    glucosa: Numeric,
+    sistolica: Numeric,
+    diastolica: Numeric,
+) -> Optional[str]:
+    """Diagnóstico simple de síndrome metabólico reutilizando las
+    clasificaciones existentes. Cuenta cuántos de los 5 componentes son
+    "no saludables" (cualquier categoría fuera de _SM_BUENAS).
+
+    Retorna:
+      - "Con SM"  si ≥3 componentes alterados
+      - "Sin SM"  si <3 alterados y al menos 3 componentes medidos
+      - None      si <3 componentes medidos (cae al contador "sin dato")
+    """
+    componentes = [
+        ("obesidad_abdominal", clasificar_obesidad_abdominal(abdominal, sexo)),
+        ("hdl", clasificar_hdl(hdl, sexo)),
+        ("trigliceridos", clasificar_trigliceridos(trigliceridos)),
+        ("glicemia", clasificar_glicemia_ayunas(glucosa)),
+        ("presion", clasificar_presion(sistolica, diastolica)),
+    ]
+    medidos = 0
+    alterados = 0
+    for clave, valor in componentes:
+        if valor is None:
+            continue
+        medidos += 1
+        if valor not in _SM_BUENAS[clave]:
+            alterados += 1
+    if medidos < 3:
+        return None
+    return "Con SM" if alterados >= 3 else "Sin SM"

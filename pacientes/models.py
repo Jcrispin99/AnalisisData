@@ -43,6 +43,14 @@ class Paciente(models.Model):
         blank=True,
         help_text="Si se deja vacío se estima a partir de departamento/distrito.",
     )
+    altitud_cache = models.IntegerField(
+        "Altitud efectiva (cache)",
+        null=True,
+        blank=True,
+        db_index=True,
+        editable=False,
+        help_text="Altitud efectiva precalculada para filtros. Se llena en save().",
+    )
 
     class Meta:
         verbose_name = "Paciente"
@@ -51,6 +59,17 @@ class Paciente(models.Model):
 
     def __str__(self):
         return f"{self.nro_documento} - {self.nombre_completo}"
+
+    def save(self, *args, **kwargs):
+        # Precalcula la altitud efectiva para que los filtros del dashboard
+        # puedan usar SQL directo (índice en altitud_cache).
+        if self.altitud_msnm is not None:
+            self.altitud_cache = self.altitud_msnm
+        else:
+            self.altitud_cache = altitud_estimada(
+                self.distrito, self.provincia, self.departamento
+            )
+        super().save(*args, **kwargs)
 
     @property
     def edad(self):
@@ -65,6 +84,9 @@ class Paciente(models.Model):
 
     @property
     def altitud_efectiva(self):
+        # Lee del cache si existe (rellenado en save); si no, lo calcula.
+        if self.altitud_cache is not None:
+            return self.altitud_cache
         if self.altitud_msnm is not None:
             return self.altitud_msnm
         return altitud_estimada(self.distrito, self.provincia, self.departamento)
@@ -185,6 +207,18 @@ class Atencion(models.Model):
     @property
     def clasif_presion(self):
         return criterios.clasificar_presion(self.sistolica, self.diastolica)
+
+    @property
+    def clasif_sindrome_metabolico(self):
+        return criterios.clasificar_sindrome_metabolico(
+            self.abdominal,
+            self.paciente.sexo,
+            self.hdl,
+            self.trigliceridos,
+            self.glucosa,
+            self.sistolica,
+            self.diastolica,
+        )
 
 
 class AtencionNutricion(models.Model):

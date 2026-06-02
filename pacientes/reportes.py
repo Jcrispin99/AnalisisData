@@ -43,6 +43,7 @@ CATEGORIAS_BUENAS = {
     "glicemia": {"Normal"},
     "hb_a1c": {"Normal"},
     "presion": {"Normal Alta"},
+    "sindrome_metabolico": {"Sin SM"},
     "imc": {"Normal"},
     "grasa_corporal": {"Saludable", "Aceptable"},
     "grasa_visceral": {"Saludable"},
@@ -90,6 +91,10 @@ CATEGORIAS = {
         "Hipertensión Grado 2",
         "Crisis Hipertensiva",
     ],
+    "sindrome_metabolico": [
+        "Sin SM",
+        "Con SM",
+    ],
     "imc": [
         "Bajo peso",
         "Normal",
@@ -117,6 +122,13 @@ FILAS = [
     FilaDef("glicemia", "Glicemia en ayunas", "clasif_glicemia_ayunas", CATEGORIAS["diabetes"]),
     FilaDef("hb_a1c", "Hemoglobina glicosilada", "clasif_hb_a1c", CATEGORIAS["diabetes"]),
     FilaDef("presion", "Presión arterial", "clasif_presion", CATEGORIAS["hta"]),
+    FilaDef(
+        "sindrome_metabolico",
+        "Síndrome Metabólico",
+        "clasif_sindrome_metabolico",
+        CATEGORIAS["sindrome_metabolico"],
+        by_sex=True,
+    ),
 ]
 
 SECCIONES = [
@@ -128,6 +140,7 @@ SECCIONES = [
     ("obesidad_abdominal", "Obesidad abdominal", ["obesidad_abdominal"]),
     ("diabetes", "Diabetes Mellitus", ["glicemia", "hb_a1c"]),
     ("hta", "Hipertensión arterial", ["presion"]),
+    ("sindrome_metabolico", "Síndrome Metabólico", ["sindrome_metabolico"]),
 ]
 
 FILAS_NUTRICION = [
@@ -140,20 +153,30 @@ FILAS_NUTRICION = [
 _MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun",
           "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
 
-# Paleta alineada con la del chart (verde/amarillo/naranja/rojo/morado/azul).
-_PALETA = ["#22c55e", "#eab308", "#f97316", "#ef4444", "#a855f7", "#3b82f6"]
+# Paleta alineada con la del chart.
+_VERDE = "#22c55e"
+_PALETA_ALTERADAS = ["#eab308", "#f97316", "#ef4444", "#a855f7"]  # amarillo→naranja→rojo→morado
 
 
-def _color_para(cats, i):
-    """Color por posición en la lista de categorías.
+def _color_para(cats, i, buenas):
+    """Color por categoría usando CATEGORIAS_BUENAS como fuente de verdad.
 
-    Para listas de 3 elementos donde la última categoría es 'severa'
-    (diabetes, obesidad abdominal), saltamos del amarillo al rojo
-    para reflejar la severidad correctamente.
+    - Categorías "buenas" → verde.
+    - Categorías "alteradas" → gradiente amarillo→naranja→rojo→morado según
+      su orden entre las alteradas. Para 1 alterada se usa rojo directo
+      (severidad máxima implícita).
     """
-    if len(cats) == 3:
-        return [_PALETA[0], _PALETA[1], _PALETA[3]][i]
-    return _PALETA[i % len(_PALETA)]
+    if cats[i] in buenas:
+        return _VERDE
+    n_alteradas = sum(1 for c in cats if c not in buenas)
+    idx_alterada = sum(1 for c in cats[:i] if c not in buenas)
+    if n_alteradas == 1:
+        return _PALETA_ALTERADAS[2]  # rojo directo (única alterada)
+    if n_alteradas == 2:
+        return [_PALETA_ALTERADAS[0], _PALETA_ALTERADAS[2]][idx_alterada]  # amarillo, rojo
+    if n_alteradas == 3:
+        return _PALETA_ALTERADAS[:3][idx_alterada]  # amarillo, naranja, rojo
+    return _PALETA_ALTERADAS[idx_alterada % len(_PALETA_ALTERADAS)]
 
 
 # Tooltips de criterios que NO son simples cortes (combinador, multi-variable, o
@@ -234,6 +257,21 @@ TOOLTIPS = {
     "grasa_visceral":      u.render_tooltip("Grasa visceral (rating Tanita 1-59)", u.GRASA_VISCERAL),
     "masa_muscular":       u.render_tooltip_por_sexo("% Masa muscular", u.MASA_MUSCULAR,
                                                      fuente_html="Estándar Tanita. El xlsx no define cortes."),
+    "sindrome_metabolico": (
+        "<b>Síndrome Metabólico</b> — cuenta cuántos de los 5 componentes están "
+        "alterados según las clasificaciones del propio sistema:"
+        "<ul class='mt-1 ml-3 list-disc'>"
+        "<li>Perímetro abdominal (cualquier grado)</li>"
+        "<li>HDL Colesterol (cualquier dislipidemia)</li>"
+        "<li>Triglicéridos (cualquier dislipidemia)</li>"
+        "<li>Glicemia en ayunas (prediabetes o diabetes)</li>"
+        "<li>Presión arterial (elevada o hipertensión)</li>"
+        "</ul>"
+        "<p class='mt-2'><b>Con SM</b>: ≥3 componentes alterados. "
+        "<b>Sin SM</b>: &lt;3 alterados. "
+        "Las atenciones con menos de 3 mediciones se cuentan como "
+        "<i>sin dato</i> arriba de la card.</p>"
+    ),
 }
 
 
@@ -246,6 +284,7 @@ def años_disponibles():
 def filtros_disponibles():
     convenios = set()
     areas = set()
+    departamentos = set()
     for model in (Atencion, AtencionNutricion):
         convenios.update(
             model.objects.exclude(paciente__convenio="").values_list("paciente__convenio", flat=True)
@@ -253,16 +292,53 @@ def filtros_disponibles():
         areas.update(
             model.objects.exclude(paciente__nombre_area="").values_list("paciente__nombre_area", flat=True)
         )
-    return {"convenios": sorted(convenios), "areas": sorted(areas)}
+        # Normalizamos departamentos a mayúsculas para deduplicar AREQUIPA/Arequipa.
+        departamentos.update(
+            (d or "").strip().upper()
+            for d in model.objects.exclude(paciente__departamento="").values_list(
+                "paciente__departamento", flat=True
+            )
+        )
+    departamentos.discard("")
+    return {
+        "convenios": sorted(convenios),
+        "areas": sorted(areas),
+        "departamentos": sorted(departamentos),
+    }
 
 
-def _aplicar_filtros(qs, year, convenio, area):
+# Bandas de altitud para el filtro del dashboard.
+# Cada tupla: (clave_url, label, min_msnm_inclusive, max_msnm_exclusive_o_None)
+ALTITUD_BANDAS = [
+    ("costa", "Costa (<500 msnm)", 0, 500),
+    ("sierra_baja", "Sierra baja (500–2500 msnm)", 500, 2500),
+    ("sierra_alta", "Sierra alta (2500–3500 msnm)", 2500, 3500),
+    ("sierra_muy_alta", "Sierra muy alta (>3500 msnm)", 3500, None),
+    ("sin_altitud", "Sin altitud declarada", None, None),
+]
+ALTITUD_BANDAS_DICT = {b[0]: b for b in ALTITUD_BANDAS}
+
+
+def _aplicar_filtros(qs, year, convenio, area, altitud_banda=None, departamento=None):
     if year:
         qs = qs.filter(fecha__year=year)
     if convenio:
         qs = qs.filter(paciente__convenio=convenio)
     if area:
         qs = qs.filter(paciente__nombre_area=area)
+    if departamento:
+        # Case-insensitive porque la BBDD tiene AREQUIPA y Arequipa mezclados.
+        qs = qs.filter(paciente__departamento__iexact=departamento)
+    if altitud_banda:
+        banda = ALTITUD_BANDAS_DICT.get(altitud_banda)
+        if banda:
+            _, _, lo, hi = banda
+            if altitud_banda == "sin_altitud":
+                qs = qs.filter(paciente__altitud_cache__isnull=True)
+            else:
+                qs = qs.filter(paciente__altitud_cache__gte=lo)
+                if hi is not None:
+                    qs = qs.filter(paciente__altitud_cache__lt=hi)
     return qs
 
 
@@ -288,7 +364,7 @@ def _bins_y_keyfn(year, fechas):
     return bins, labels, lambda at: (at.fecha.year, at.fecha.month)
 
 
-def _construir_celdas(counter, cats):
+def _construir_celdas(counter, cats, buenas):
     """Genera celdas (categoria/n/pct/color) y total con dato a partir de un Counter."""
     total_con_dato = sum(counter.values())
     celdas = []
@@ -299,7 +375,7 @@ def _construir_celdas(counter, cats):
             "categoria": cat,
             "n": n,
             "pct": pct,
-            "color": _color_para(cats, i),
+            "color": _color_para(cats, i, buenas),
         })
     return celdas, total_con_dato
 
@@ -358,15 +434,15 @@ def _resumen(qs, filas_def, year):
 
     filas = {}
     for f in filas_def:
-        celdas, total_con_dato = _construir_celdas(counters[f.clave], f.cats)
         buenas = CATEGORIAS_BUENAS.get(f.clave, set())
+        celdas, total_con_dato = _construir_celdas(counters[f.clave], f.cats, buenas)
         pct_alterado = _pct_alterado(celdas, total_con_dato, buenas)
 
         datasets = [
             {
                 "label": cat,
                 "data": [series[f.clave][cat].get(b, 0) for b in bins],
-                "color": _color_para(f.cats, i),
+                "color": _color_para(f.cats, i, buenas),
             }
             for i, cat in enumerate(f.cats)
         ]
@@ -386,12 +462,12 @@ def _resumen(qs, filas_def, year):
         if f.by_sex:
             por_sexo = {}
             for sx in ("M", "F"):
-                celdas_sx, total_sx = _construir_celdas(counters_sex[f.clave][sx], f.cats)
+                celdas_sx, total_sx = _construir_celdas(counters_sex[f.clave][sx], f.cats, buenas)
                 datasets_sx = [
                     {
                         "label": cat,
                         "data": [series_sex[f.clave][sx][cat].get(b, 0) for b in bins],
-                        "color": _color_para(f.cats, i),
+                        "color": _color_para(f.cats, i, buenas),
                     }
                     for i, cat in enumerate(f.cats)
                 ]
@@ -406,55 +482,6 @@ def _resumen(qs, filas_def, year):
 
         filas[f.clave] = fila
     return total, filas
-
-
-def _calcular_kpis(filas_clinico, total_clinico):
-    """KPIs gerenciales — sintetizados de las filas ya calculadas para evitar
-    re-iterar atenciones. Cada KPI: clave, label, n, pct, hint."""
-    def pct(n):
-        return (n / total_clinico * 100) if total_clinico else 0
-
-    def alterados(clave):
-        fila = filas_clinico.get(clave)
-        if not fila:
-            return 0
-        buenas = CATEGORIAS_BUENAS.get(clave, set())
-        return sum(c["n"] for c in fila["celdas"] if c["categoria"] not in buenas)
-
-    hta_alt = alterados("presion") - sum(
-        c["n"] for c in filas_clinico["presion"]["celdas"]
-        if c["categoria"] == "Elevada"
-    )  # excluye "Elevada" para HTA Grado 1+
-    diab = sum(
-        c["n"] for c in filas_clinico.get("glicemia", {}).get("celdas", [])
-        if c["categoria"] == "Diabetes"
-    ) + sum(
-        c["n"] for c in filas_clinico.get("hb_a1c", {}).get("celdas", [])
-        if c["categoria"] == "Diabetes"
-    )
-    prediab = sum(
-        c["n"] for c in filas_clinico.get("glicemia", {}).get("celdas", [])
-        if c["categoria"] == "Prediabetes"
-    )
-
-    return [
-        {"clave": "total", "label": "Atenciones del periodo", "n": total_clinico,
-         "pct": None, "es_total": True, "hint": "Población base del reporte"},
-        {"clave": "dislipidemia", "label": "Con dislipidemia",
-         "n": alterados("dislipidemia_global"),
-         "pct": pct(alterados("dislipidemia_global")),
-         "hint": "Cualquier perfil lipídico distinto de Normal"},
-        {"clave": "hta", "label": "HTA Grado 1 o más",
-         "n": hta_alt, "pct": pct(hta_alt),
-         "hint": "Hipertensión confirmada (excluye «Elevada»)"},
-        {"clave": "obesidad", "label": "Obesidad abdominal",
-         "n": alterados("obesidad_abdominal"),
-         "pct": pct(alterados("obesidad_abdominal")),
-         "hint": "Perímetro abdominal en Grado 1 o 2"},
-        {"clave": "diabetes", "label": "Diabetes o prediabetes",
-         "n": diab + prediab, "pct": pct(diab + prediab),
-         "hint": f"Diabetes: {diab} · Prediabetes: {prediab}"},
-    ]
 
 
 def _generar_insights(filas_clinico, filas_nutri):
@@ -489,14 +516,16 @@ def _generar_insights(filas_clinico, filas_nutri):
     return insights[:3]
 
 
-def reporte_atenciones(year=None, convenio=None, area=None):
+def reporte_atenciones(year=None, convenio=None, area=None, altitud_banda=None, departamento=None):
     qs_clinico = _aplicar_filtros(
-        Atencion.objects.select_related("paciente"), year, convenio, area
+        Atencion.objects.select_related("paciente"),
+        year, convenio, area, altitud_banda, departamento,
     )
     total_clinico, filas_clinico = _resumen(qs_clinico, FILAS, year)
 
     qs_nutri = _aplicar_filtros(
-        AtencionNutricion.objects.select_related("paciente"), year, convenio, area
+        AtencionNutricion.objects.select_related("paciente"),
+        year, convenio, area, altitud_banda, departamento,
     )
     total_nutri, filas_nutri = _resumen(qs_nutri, FILAS_NUTRICION, year)
 
@@ -519,7 +548,6 @@ def reporte_atenciones(year=None, convenio=None, area=None):
 
     return {
         "pestañas": pestañas,
-        "kpis": _calcular_kpis(filas_clinico, total_clinico),
         "insights": _generar_insights(filas_clinico, filas_nutri),
         "total_clinico": total_clinico,
     }

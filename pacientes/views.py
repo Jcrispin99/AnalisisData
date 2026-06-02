@@ -8,6 +8,8 @@ def reporte_atenciones_view(request):
     year = request.GET.get("year") or None
     convenio = request.GET.get("convenio") or None
     area = request.GET.get("area") or None
+    altitud_banda = request.GET.get("altitud") or None
+    departamento = request.GET.get("departamento") or None
 
     if year:
         try:
@@ -15,7 +17,16 @@ def reporte_atenciones_view(request):
         except ValueError:
             year = None
 
-    data = reportes.reporte_atenciones(year=year, convenio=convenio, area=area)
+    if altitud_banda not in reportes.ALTITUD_BANDAS_DICT:
+        altitud_banda = None
+
+    data = reportes.reporte_atenciones(
+        year=year,
+        convenio=convenio,
+        area=area,
+        altitud_banda=altitud_banda,
+        departamento=departamento,
+    )
     filtros = reportes.filtros_disponibles()
 
     # Aplana las series por canvas id. Para filas by_sex generamos 3 canvas:
@@ -36,13 +47,15 @@ def reporte_atenciones_view(request):
         **admin.site.each_context(request),
         "title": "Reporte clínico de atenciones",
         "data": data,
-        "kpis": data.get("kpis", []),
         "insights": data.get("insights", []),
         "chart_data": chart_data,
         "filtros": filtros,
         "años": reportes.años_disponibles(),
+        "altitud_bandas": reportes.ALTITUD_BANDAS,
         "selected_year": year,
         "selected_convenio": convenio or "",
         "selected_area": area or "",
+        "selected_altitud": altitud_banda or "",
+        "selected_departamento": (departamento or "").upper(),
     }
     return render(request, "admin/pacientes/reporte_atenciones.html", context)

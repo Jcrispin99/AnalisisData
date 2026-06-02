@@ -23,43 +23,12 @@
       </h1>
       <p class="text-sm text-font-subtle-light dark:text-font-subtle-dark mt-1">
         <!-- prettier-ignore -->
-        Indicadores de salud poblacional · período {% if selected_year %}{{ selected_year }}{% else %}completo{% endif %}{% if selected_convenio %} · convenio: {{ selected_convenio }}{% endif %}{% if selected_area %} · área: {{ selected_area }}{% endif %}
+        Indicadores de salud poblacional · período {% if selected_year %}{{ selected_year }}{% else %}completo{% endif %}{% if selected_convenio %} · convenio: {{ selected_convenio }}{% endif %}{% if selected_area %} · área: {{ selected_area }}{% endif %}{% if selected_departamento %} · departamento: {{ selected_departamento }}{% endif %}{% if selected_altitud %} · altitud: {% for b in altitud_bandas %}{% if b.0 == selected_altitud %}{{ b.1 }}{% endif %}{% endfor %}{% endif %}
       </p>
     </div>
   </div>
 
-  {# ============= KPI CARDS ============= #} {% if kpis %}
-  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 md:gap-5">
-    {% for k in kpis %}
-    <div
-      class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default p-4 shadow-sm hover:shadow-md transition-shadow {% if k.es_total %}border-l-4 border-l-primary-500{% endif %}"
-    >
-      <p
-        class="text-xs uppercase tracking-wider text-font-subtle-light dark:text-font-subtle-dark font-medium"
-      >
-        {{ k.label }}
-      </p>
-      <p class="mt-2 flex items-baseline gap-2">
-        <span
-          class="text-3xl font-bold tabular-nums {% if k.es_total %}text-primary-600 dark:text-primary-400{% endif %}"
-          >{{ k.n }}</span
-        >
-        {% if k.pct is not None %}
-        <span
-          class="text-sm font-semibold text-font-subtle-light dark:text-font-subtle-dark"
-          >{{ k.pct|floatformat:1 }}%</span
-        >
-        {% endif %}
-      </p>
-      <p
-        class="mt-1 text-xs text-font-subtle-light dark:text-font-subtle-dark leading-snug"
-      >
-        {{ k.hint }}
-      </p>
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %} {# ---- Filtros ---- #}
+  {# ---- Filtros ---- #}
   <form
     method="get"
     class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default p-5 flex flex-wrap gap-5 items-end"
@@ -104,6 +73,36 @@
         {% for a in filtros.areas %}
         <option value="{{ a }}" {% if selected_area == a %}selected{% endif %}>
           {{ a }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-xs font-medium mb-1.5">Departamento</label>
+      <select
+        name="departamento"
+        class="border border-base-200 dark:border-base-800 rounded-default px-3 py-2 bg-white dark:bg-base-900"
+      >
+        <option value="">Todos</option>
+        {% for d in filtros.departamentos %}
+        <option value="{{ d }}" {% if selected_departamento == d %}selected{% endif %}>
+          {{ d }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div>
+      <label class="block text-xs font-medium mb-1.5">Altitud</label>
+      <select
+        name="altitud"
+        class="border border-base-200 dark:border-base-800 rounded-default px-3 py-2 bg-white dark:bg-base-900"
+      >
+        <option value="">Todas</option>
+        {% for b in altitud_bandas %}
+        <option value="{{ b.0 }}" {% if selected_altitud == b.0 %}selected{% endif %}>
+          {{ b.1 }}
         </option>
         {% endfor %}
       </select>
@@ -231,18 +230,29 @@
             <div class="grid grid-cols-2 gap-4 items-center">
               {# Varones (barra hacia la izquierda) #}
               <div class="flex items-center gap-2 justify-end">
+                {% if fila.por_sexo.M.total_con_dato %}
                 <span
                   class="text-sm font-semibold tabular-nums text-blue-700 dark:text-blue-400 min-w-[3rem] text-right"
-                  >{{ fila.por_sexo.M.pct_alterado|floatformat:0 }}%</span
+                  >{{ fila.por_sexo.M.pct_alterado|floatformat:1 }}%</span
                 >
                 <div
                   class="flex-1 h-3 bg-base-100 dark:bg-base-800 rounded-full overflow-hidden relative"
                 >
                   <div
-                    class="absolute right-0 top-0 h-full bg-blue-500/80 dark:bg-blue-500/70 rounded-full transition-all"
-                    style="width: {{ fila.por_sexo.M.pct_alterado|floatformat:1 }}%"
+                    class="absolute right-0 top-0 h-full rounded-full transition-all"
+                    style="width: {% widthratio fila.por_sexo.M.pct_alterado 100 100 %}%; background-color: #3b82f6"
                   ></div>
                 </div>
+                {% else %}
+                <span
+                  class="text-sm font-semibold text-font-subtle-light dark:text-font-subtle-dark min-w-[3rem] text-right"
+                  >—</span
+                >
+                <div
+                  class="flex-1 h-3 bg-base-100 dark:bg-base-800 rounded-full"
+                  title="Sin datos para varones"
+                ></div>
+                {% endif %}
                 <span
                   class="text-xs text-font-subtle-light dark:text-font-subtle-dark min-w-[5rem]"
                   ><span
@@ -262,18 +272,29 @@
                     >♀</span
                   ></span
                 >
+                {% if fila.por_sexo.F.total_con_dato %}
                 <div
                   class="flex-1 h-3 bg-base-100 dark:bg-base-800 rounded-full overflow-hidden relative"
                 >
                   <div
-                    class="absolute left-0 top-0 h-full bg-pink-500/80 dark:bg-pink-500/70 rounded-full transition-all"
-                    style="width: {{ fila.por_sexo.F.pct_alterado|floatformat:1 }}%"
+                    class="absolute left-0 top-0 h-full rounded-full transition-all"
+                    style="width: {% widthratio fila.por_sexo.F.pct_alterado 100 100 %}%; background-color: #ec4899"
                   ></div>
                 </div>
                 <span
                   class="text-sm font-semibold tabular-nums text-pink-700 dark:text-pink-400 min-w-[3rem]"
-                  >{{ fila.por_sexo.F.pct_alterado|floatformat:0 }}%</span
+                  >{{ fila.por_sexo.F.pct_alterado|floatformat:1 }}%</span
                 >
+                {% else %}
+                <div
+                  class="flex-1 h-3 bg-base-100 dark:bg-base-800 rounded-full"
+                  title="Sin datos para mujeres"
+                ></div>
+                <span
+                  class="text-sm font-semibold text-font-subtle-light dark:text-font-subtle-dark min-w-[3rem]"
+                  >—</span
+                >
+                {% endif %}
               </div>
             </div>
           </div>

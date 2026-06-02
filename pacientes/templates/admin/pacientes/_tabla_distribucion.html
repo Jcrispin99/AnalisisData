@@ -28,7 +28,7 @@ Renderiza la tabla de distribución de categorías. Recibe:
                         <div class="flex items-center gap-2">
                             <div class="flex-1 h-2 bg-base-100 dark:bg-base-800 rounded-full overflow-hidden">
                                 <div class="h-full rounded-full transition-all"
-                                     style="width: {{ celda.pct|floatformat:1 }}%; background-color: {{ celda.color }}"></div>
+                                     style="width: {% widthratio celda.pct 100 100 %}%; background-color: {{ celda.color }}"></div>
                             </div>
                             <span class="text-xs font-medium tabular-nums text-font-subtle-light dark:text-font-subtle-dark min-w-[3rem] text-right">{{ celda.pct|floatformat:1 }}%</span>
                         </div>
