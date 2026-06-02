@@ -23,7 +23,7 @@
       </h1>
       <p class="text-sm text-font-subtle-light dark:text-font-subtle-dark mt-1">
         <!-- prettier-ignore -->
-        Indicadores de salud poblacional · período {% if selected_year %}{{ selected_year }}{% else %}completo{% endif %}{% if selected_convenio %} · convenio: {{ selected_convenio }}{% endif %}{% if selected_area %} · área: {{ selected_area }}{% endif %}{% if selected_sexo %} · sexo: {% if selected_sexo == "M" %}Varones{% else %}Mujeres{% endif %}{% endif %}
+        Indicadores de salud poblacional · período {% if selected_year %}{{ selected_year }}{% else %}completo{% endif %}{% if selected_convenio %} · convenio: {{ selected_convenio }}{% endif %}{% if selected_area %} · área: {{ selected_area }}{% endif %}
       </p>
     </div>
   </div>
@@ -106,22 +106,6 @@
           {{ a }}
         </option>
         {% endfor %}
-      </select>
-    </div>
-
-    <div>
-      <label class="block text-xs font-medium mb-1.5">Sexo</label>
-      <select
-        name="sexo"
-        class="border border-base-200 dark:border-base-800 rounded-default px-3 py-2 bg-white dark:bg-base-900"
-      >
-        <option value="">Todos</option>
-        <option value="M" {% if selected_sexo == "M" %}selected{% endif %}>
-          Masculino
-        </option>
-        <option value="F" {% if selected_sexo == "F" %}selected{% endif %}>
-          Femenino
-        </option>
       </select>
     </div>
 
@@ -294,56 +278,110 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {# Varones #}
-            <div
-              class="border border-blue-100 dark:border-blue-900/40 rounded-default p-3 bg-blue-50/30 dark:bg-blue-950/10"
+          {# ====== Sección General: tabla agregada + gráfico general ====== #}
+          <div class="mb-6">
+            <p
+              class="text-xs uppercase tracking-wider text-font-subtle-light dark:text-font-subtle-dark font-medium mb-3"
             >
-              <div class="flex items-baseline justify-between mb-2">
-                <p
-                  class="text-sm font-semibold text-blue-700 dark:text-blue-300"
-                >
-                  <span class="text-lg">♂</span> Varones
-                </p>
-                <p
-                  class="text-xs text-font-subtle-light dark:text-font-subtle-dark tabular-nums"
-                >
-                  n = {{ fila.por_sexo.M.total_con_dato }}
-                </p>
+              General · Toda la población
+            </p>
+            <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+              <div class="lg:col-span-2">
+                {% include "admin/pacientes/_tabla_distribucion.html" with celdas=fila.celdas total=fila.total_con_dato %}
               </div>
-              {% include "admin/pacientes/_tabla_distribucion.html" with celdas=fila.por_sexo.M.celdas total=fila.por_sexo.M.total_con_dato %}
-            </div>
-            {# Mujeres #}
-            <div
-              class="border border-pink-100 dark:border-pink-900/40 rounded-default p-3 bg-pink-50/30 dark:bg-pink-950/10"
-            >
-              <div class="flex items-baseline justify-between mb-2">
-                <p
-                  class="text-sm font-semibold text-pink-700 dark:text-pink-300"
-                >
-                  <span class="text-lg">♀</span> Mujeres
-                </p>
-                <p
-                  class="text-xs text-font-subtle-light dark:text-font-subtle-dark tabular-nums"
-                >
-                  n = {{ fila.por_sexo.F.total_con_dato }}
-                </p>
+              <div class="lg:col-span-3 relative h-[260px] w-full">
+                <canvas id="chart-{{ p.id }}-{{ fila.clave }}-general"></canvas>
               </div>
-              {% include "admin/pacientes/_tabla_distribucion.html" with celdas=fila.por_sexo.F.celdas total=fila.por_sexo.F.total_con_dato %}
             </div>
           </div>
 
-          {# ====== Sub-zona C: Gráfico de evolución ====== #}
+          {# ====== Tablas M/F con swap (flecha intercambia con gráfico opuesto) ====== #}
           <div
-            class="mt-8 pt-6 border-t border-base-100 dark:border-base-800/60"
+            x-data="{ verGM: false, verGF: false }"
+            class="grid grid-cols-1 md:grid-cols-2 gap-4"
           >
-            <p
-              class="text-xs uppercase tracking-wider text-font-subtle-light dark:text-font-subtle-dark font-medium mb-2"
+            {# Slot izquierdo: tabla Varones por defecto; si verGF=true, muestra gráfico Mujeres #}
+            <div
+              class="border border-blue-100 dark:border-blue-900/40 rounded-default p-3 bg-blue-50/30 dark:bg-blue-950/10"
             >
-              Evolución temporal (toda la población)
-            </p>
-            <div class="relative h-[260px] w-full">
-              <canvas id="chart-{{ p.id }}-{{ fila.clave }}"></canvas>
+              {# Tabla Varones — botón en el header controla swap del slot opuesto #}
+              <div x-show="!verGF">
+                <div class="flex items-center justify-between gap-3 mb-2">
+                  <p class="text-sm font-semibold text-blue-700 dark:text-blue-300">
+                    <span class="text-lg">♂</span> Varones
+                  </p>
+                  <div class="flex items-center gap-3">
+                    <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark tabular-nums">
+                      n = {{ fila.por_sexo.M.total_con_dato }}
+                    </p>
+                    <button
+                      type="button"
+                      @click="verGM = !verGM; if (verGM) $nextTick(() => window.tryRenderById && window.tryRenderById('chart-{{ p.id }}-{{ fila.clave }}-M'))"
+                      class="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-md text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+                    >
+                      <span x-text="verGM ? 'Ocultar gráfico' : 'Ver gráfico'"></span>
+                      <span aria-hidden="true" x-text="verGM ? '↩' : '→'"></span>
+                    </button>
+                  </div>
+                </div>
+                {% include "admin/pacientes/_tabla_distribucion.html" with celdas=fila.por_sexo.M.celdas total=fila.por_sexo.M.total_con_dato %}
+              </div>
+              {# Gráfico Mujeres (swap desde lado derecho) #}
+              <div x-show="verGF" x-cloak>
+                <div class="flex items-center justify-between gap-3 mb-2">
+                  <p class="text-sm font-semibold text-pink-700 dark:text-pink-300">
+                    <span class="text-lg">♀</span> Gráfico mujeres
+                  </p>
+                  <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark tabular-nums">
+                    n = {{ fila.por_sexo.F.total_con_dato }}
+                  </p>
+                </div>
+                <div class="relative h-[240px] w-full">
+                  <canvas id="chart-{{ p.id }}-{{ fila.clave }}-F"></canvas>
+                </div>
+              </div>
+            </div>
+
+            {# Slot derecho: tabla Mujeres por defecto; si verGM=true, muestra gráfico Varones #}
+            <div
+              class="border border-pink-100 dark:border-pink-900/40 rounded-default p-3 bg-pink-50/30 dark:bg-pink-950/10"
+            >
+              {# Tabla Mujeres — botón en el header controla swap del slot opuesto #}
+              <div x-show="!verGM">
+                <div class="flex items-center justify-between gap-3 mb-2">
+                  <p class="text-sm font-semibold text-pink-700 dark:text-pink-300">
+                    <span class="text-lg">♀</span> Mujeres
+                  </p>
+                  <div class="flex items-center gap-3">
+                    <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark tabular-nums">
+                      n = {{ fila.por_sexo.F.total_con_dato }}
+                    </p>
+                    <button
+                      type="button"
+                      @click="verGF = !verGF; if (verGF) $nextTick(() => window.tryRenderById && window.tryRenderById('chart-{{ p.id }}-{{ fila.clave }}-F'))"
+                      class="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-md text-pink-700 dark:text-pink-300 hover:bg-pink-100 dark:hover:bg-pink-900/40 transition-colors"
+                    >
+                      <span aria-hidden="true" x-text="verGF ? '↪' : '←'"></span>
+                      <span x-text="verGF ? 'Ocultar gráfico' : 'Ver gráfico'"></span>
+                    </button>
+                  </div>
+                </div>
+                {% include "admin/pacientes/_tabla_distribucion.html" with celdas=fila.por_sexo.F.celdas total=fila.por_sexo.F.total_con_dato %}
+              </div>
+              {# Gráfico Varones (swap desde lado izquierdo) #}
+              <div x-show="verGM" x-cloak>
+                <div class="flex items-center justify-between gap-3 mb-2">
+                  <p class="text-sm font-semibold text-blue-700 dark:text-blue-300">
+                    <span class="text-lg">♂</span> Gráfico varones
+                  </p>
+                  <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark tabular-nums">
+                    n = {{ fila.por_sexo.M.total_con_dato }}
+                  </p>
+                </div>
+                <div class="relative h-[240px] w-full">
+                  <canvas id="chart-{{ p.id }}-{{ fila.clave }}-M"></canvas>
+                </div>
+              </div>
             </div>
           </div>
           {% else %}
@@ -386,8 +424,8 @@
   </p>
 </div>
 
-{# ---- Datos para Chart.js (un solo blob, indexado por canvas id) ---- #} {{
-chart_data|json_script:"chart-data" }}
+{# ---- Datos para Chart.js (un solo blob, indexado por canvas id) ---- #}
+{{ chart_data|json_script:"chart-data" }}
 
 <script>
   (function () {
@@ -400,6 +438,7 @@ chart_data|json_script:"chart-data" }}
       "#3b82f6",
     ];
     const DATA = JSON.parse(document.getElementById("chart-data").textContent);
+    const INSTANCES = new Map();
 
     function hexToRgba(hex, alpha) {
       const v = hex.replace("#", "");
@@ -409,9 +448,7 @@ chart_data|json_script:"chart-data" }}
       return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
-    function renderChart(canvas) {
-      const serie = DATA[canvas.id];
-      if (!serie) return;
+    function buildChart(canvas, serie) {
       const datasets = serie.datasets.map((d, i) => {
         const color = d.color || PALETA_FALLBACK[i % PALETA_FALLBACK.length];
         return {
@@ -424,7 +461,7 @@ chart_data|json_script:"chart-data" }}
           pointRadius: 2,
         };
       });
-      new Chart(canvas.getContext("2d"), {
+      return new Chart(canvas.getContext("2d"), {
         type: "line",
         data: { labels: serie.labels, datasets: datasets },
         options: {
@@ -446,20 +483,48 @@ chart_data|json_script:"chart-data" }}
       });
     }
 
-    function renderVisible() {
+    function tryRender(canvas) {
+      if (!canvas) return;
+      if (INSTANCES.has(canvas.id)) return;
+      if (canvas.offsetParent === null) return; // oculto: esperará al swap
+      const serie = DATA[canvas.id];
+      if (!serie) return;
+      INSTANCES.set(canvas.id, buildChart(canvas, serie));
+    }
+
+    // Expuesta para que Alpine la llame tras hacer swap (canvas oculto pasa
+    // a visible — el IntersectionObserver no detecta cambios de display).
+    window.tryRenderById = function (id) {
+      const c = document.getElementById(id);
+      if (c) tryRender(c);
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) tryRender(e.target);
+        });
+      },
+      { threshold: 0.01 }
+    );
+
+    function init() {
       document.querySelectorAll('canvas[id^="chart-"]').forEach((c) => {
-        if (c.dataset.rendered) return;
-        if (c.offsetParent === null) return; // oculto en pestaña inactiva
-        c.dataset.rendered = "1";
-        renderChart(c);
+        tryRender(c);
+        observer.observe(c);
       });
     }
 
-    document.addEventListener("DOMContentLoaded", () => {
-      renderVisible();
-      // Al cambiar pestaña, Alpine despliega canvases ocultos: re-render.
-      document.addEventListener("click", () => setTimeout(renderVisible, 60));
-    });
+    if (window.Alpine) {
+      requestAnimationFrame(init);
+    } else {
+      document.addEventListener("alpine:initialized", () =>
+        requestAnimationFrame(init)
+      );
+      document.addEventListener("DOMContentLoaded", () =>
+        setTimeout(init, 50)
+      );
+    }
   })();
 </script>
 <style>

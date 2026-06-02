@@ -8,9 +8,6 @@ def reporte_atenciones_view(request):
     year = request.GET.get("year") or None
     convenio = request.GET.get("convenio") or None
     area = request.GET.get("area") or None
-    sexo = request.GET.get("sexo") or None
-    if sexo not in ("M", "F"):
-        sexo = None
 
     if year:
         try:
@@ -18,14 +15,22 @@ def reporte_atenciones_view(request):
         except ValueError:
             year = None
 
-    data = reportes.reporte_atenciones(year=year, convenio=convenio, area=area, sexo=sexo)
+    data = reportes.reporte_atenciones(year=year, convenio=convenio, area=area)
     filtros = reportes.filtros_disponibles()
 
-    # Aplana las series por canvas id para que el template las exponga vía json_script.
+    # Aplana las series por canvas id. Para filas by_sex generamos 3 canvas:
+    # uno general (toda la población), uno M y uno F. El frontend muestra
+    # u oculta los M/F con flechas (swap con la tabla opuesta).
     chart_data = {}
     for p in data["pestañas"]:
         for fila in p["filas"]:
-            chart_data[f"chart-{p['id']}-{fila['clave']}"] = fila["serie"]
+            cid = f"chart-{p['id']}-{fila['clave']}"
+            if fila.get("by_sex"):
+                chart_data[f"{cid}-general"] = fila["serie"]
+                chart_data[f"{cid}-M"] = fila["por_sexo"]["M"]["serie"]
+                chart_data[f"{cid}-F"] = fila["por_sexo"]["F"]["serie"]
+            else:
+                chart_data[cid] = fila["serie"]
 
     context = {
         **admin.site.each_context(request),
@@ -39,6 +44,5 @@ def reporte_atenciones_view(request):
         "selected_year": year,
         "selected_convenio": convenio or "",
         "selected_area": area or "",
-        "selected_sexo": sexo or "",
     }
     return render(request, "admin/pacientes/reporte_atenciones.html", context)

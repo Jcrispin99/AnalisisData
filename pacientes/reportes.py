@@ -256,15 +256,13 @@ def filtros_disponibles():
     return {"convenios": sorted(convenios), "areas": sorted(areas)}
 
 
-def _aplicar_filtros(qs, year, convenio, area, sexo=None):
+def _aplicar_filtros(qs, year, convenio, area):
     if year:
         qs = qs.filter(fecha__year=year)
     if convenio:
         qs = qs.filter(paciente__convenio=convenio)
     if area:
         qs = qs.filter(paciente__nombre_area=area)
-    if sexo in ("M", "F"):
-        qs = qs.filter(paciente__sexo=sexo)
     return qs
 
 
@@ -333,6 +331,15 @@ def _resumen(qs, filas_def, year):
     counters_sex = {
         f.clave: {"M": Counter(), "F": Counter()} for f in filas_def if f.by_sex
     }
+    # series_sex[clave][sexo][cat][bin] = n  (solo by_sex)
+    series_sex = {
+        f.clave: {
+            "M": defaultdict(lambda: defaultdict(int)),
+            "F": defaultdict(lambda: defaultdict(int)),
+        }
+        for f in filas_def
+        if f.by_sex
+    }
     sin_sexo_count = 0  # atenciones cuyo paciente no tiene sexo registrado
 
     for at in atenciones:
@@ -347,6 +354,7 @@ def _resumen(qs, filas_def, year):
                 series[f.clave][valor][b] += 1
                 if f.by_sex and sexo:
                     counters_sex[f.clave][sexo][valor] += 1
+                    series_sex[f.clave][sexo][valor][b] += 1
 
     filas = {}
     for f in filas_def:
@@ -379,10 +387,19 @@ def _resumen(qs, filas_def, year):
             por_sexo = {}
             for sx in ("M", "F"):
                 celdas_sx, total_sx = _construir_celdas(counters_sex[f.clave][sx], f.cats)
+                datasets_sx = [
+                    {
+                        "label": cat,
+                        "data": [series_sex[f.clave][sx][cat].get(b, 0) for b in bins],
+                        "color": _color_para(f.cats, i),
+                    }
+                    for i, cat in enumerate(f.cats)
+                ]
                 por_sexo[sx] = {
                     "celdas": celdas_sx,
                     "total_con_dato": total_sx,
                     "pct_alterado": _pct_alterado(celdas_sx, total_sx, buenas),
+                    "serie": {"labels": bin_labels, "datasets": datasets_sx},
                 }
             fila["por_sexo"] = por_sexo
             fila["sin_sexo"] = sin_sexo_count
@@ -472,14 +489,14 @@ def _generar_insights(filas_clinico, filas_nutri):
     return insights[:3]
 
 
-def reporte_atenciones(year=None, convenio=None, area=None, sexo=None):
+def reporte_atenciones(year=None, convenio=None, area=None):
     qs_clinico = _aplicar_filtros(
-        Atencion.objects.select_related("paciente"), year, convenio, area, sexo
+        Atencion.objects.select_related("paciente"), year, convenio, area
     )
     total_clinico, filas_clinico = _resumen(qs_clinico, FILAS, year)
 
     qs_nutri = _aplicar_filtros(
-        AtencionNutricion.objects.select_related("paciente"), year, convenio, area, sexo
+        AtencionNutricion.objects.select_related("paciente"), year, convenio, area
     )
     total_nutri, filas_nutri = _resumen(qs_nutri, FILAS_NUTRICION, year)
 
