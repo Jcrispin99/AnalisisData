@@ -516,6 +516,86 @@ def _generar_insights(filas_clinico, filas_nutri):
     return insights[:3]
 
 
+# ===== Proyección demográfica por envejecimiento =====
+#
+# Concepto: aprendemos cómo varía el % alterado por banda de edad sobre TODA la
+# cohorte (perfil etario). Luego proyectamos N años: cada paciente del queryset
+# filtrado "envejece" N años y miramos qué probabilidad de alteración le toca
+# en su nueva banda. Promedio = % proyectado.
+#
+# Asume cohorte estática (sin rotación) y que la relación edad↔criterio se
+# mantiene. NO modela altitud, sexo ni intervenciones de salud.
+
+_BANDAS_EDAD = [(lo, lo + 5) for lo in range(20, 70, 5)] + [(70, 200)]
+_HORIZONTE_MAX_ANIOS = 5
+
+
+def _banda_para_edad(edad):
+    """Devuelve la (lo, hi) de la banda donde cae edad. >=última banda → última."""
+    for lo, hi in _BANDAS_EDAD:
+        if lo <= edad < hi:
+            return (lo, hi)
+    return _BANDAS_EDAD[-1]
+
+
+def _perfil_etario(modelo, filas_def):
+    """Por criterio y banda de edad, calcula prob(alterado) = alterados/total.
+
+    Usa TODAS las atenciones del modelo dado (sin filtros del dashboard) para
+    máxima estabilidad estadística. Si la banda no tiene datos, queda en 0.
+    """
+    acumulado = {f.clave: {b: [0, 0] for b in _BANDAS_EDAD} for f in filas_def}
+    for at in modelo.objects.select_related("paciente").iterator():
+        edad = at.paciente.edad
+        if edad is None:
+            continue
+        b = _banda_para_edad(edad)
+        for f in filas_def:
+            buenas = CATEGORIAS_BUENAS.get(f.clave, set())
+            valor = getattr(at, f.prop, None)
+            if valor is None:
+                continue
+            acumulado[f.clave][b][1] += 1
+            if valor not in buenas:
+                acumulado[f.clave][b][0] += 1
+    return {
+        clave: {b: (alt / tot if tot else 0.0) for b, (alt, tot) in bandas.items()}
+        for clave, bandas in acumulado.items()
+    }
+
+
+def _proyectar_pcts(qs_filtrado, filas_def, perfil, años):
+    """Proyecta el % alterado de cada criterio N años hacia adelante.
+
+    Para cada paciente del queryset filtrado, mira su edad futura, busca la
+    probabilidad de alteración en la banda correspondiente y promedia.
+    Solo cuenta pacientes que TIENEN el criterio medido hoy (mismo denominador
+    que el % alterado actual).
+    """
+    if not perfil:
+        return {f.clave: {"pct": 0.0, "n": 0} for f in filas_def}
+    suma = {f.clave: 0.0 for f in filas_def}
+    n = {f.clave: 0 for f in filas_def}
+    for at in qs_filtrado:
+        edad = at.paciente.edad
+        if edad is None:
+            continue
+        edad_futura = edad + años
+        banda = _banda_para_edad(edad_futura)
+        for f in filas_def:
+            if getattr(at, f.prop, None) is None:
+                continue
+            n[f.clave] += 1
+            suma[f.clave] += perfil[f.clave].get(banda, 0.0)
+    return {
+        clave: {
+            "pct": (suma[clave] / n[clave] * 100) if n[clave] else 0.0,
+            "n": n[clave],
+        }
+        for clave in suma
+    }
+
+
 def reporte_atenciones(year=None, convenio=None, area=None, altitud_banda=None, departamento=None):
     qs_clinico = _aplicar_filtros(
         Atencion.objects.select_related("paciente"),
@@ -528,6 +608,45 @@ def reporte_atenciones(year=None, convenio=None, area=None, altitud_banda=None, 
         year, convenio, area, altitud_banda, departamento,
     )
     total_nutri, filas_nutri = _resumen(qs_nutri, FILAS_NUTRICION, year)
+
+    # ----- Proyección demográfica: calculamos los 5 horizontes (1-5 años) -----
+    # El modal del frontend alterna entre ellos sin recargar.
+    proyecciones_por_horizonte = {}
+    perfil_c = _perfil_etario(Atencion, FILAS)
+    perfil_n = _perfil_etario(AtencionNutricion, FILAS_NUTRICION) if total_nutri else {}
+    # Materializamos los querysets una sola vez para no re-consultar por horizonte.
+    atenciones_clinico = list(qs_clinico)
+    atenciones_nutri = list(qs_nutri) if total_nutri else []
+    for h in range(1, _HORIZONTE_MAX_ANIOS + 1):
+        pcts_c = _proyectar_pcts(atenciones_clinico, FILAS, perfil_c, h)
+        pcts_n = _proyectar_pcts(atenciones_nutri, FILAS_NUTRICION, perfil_n, h) if total_nutri else {}
+        items = []
+        for fdef in FILAS:
+            fila_actual = filas_clinico[fdef.clave]
+            p = pcts_c.get(fdef.clave, {"pct": 0.0, "n": 0})
+            items.append({
+                "clave": fdef.clave,
+                "label": fdef.label,
+                "pct_hoy": fila_actual["pct_alterado"],
+                "n_hoy": fila_actual["total_con_dato"],
+                "pct_proyectado": p["pct"],
+                "n_proyectado": p["n"],
+                "delta": p["pct"] - fila_actual["pct_alterado"],
+            })
+        if total_nutri:
+            for fdef in FILAS_NUTRICION:
+                fila_actual = filas_nutri[fdef.clave]
+                p = pcts_n.get(fdef.clave, {"pct": 0.0, "n": 0})
+                items.append({
+                    "clave": fdef.clave,
+                    "label": fdef.label,
+                    "pct_hoy": fila_actual["pct_alterado"],
+                    "n_hoy": fila_actual["total_con_dato"],
+                    "pct_proyectado": p["pct"],
+                    "n_proyectado": p["n"],
+                    "delta": p["pct"] - fila_actual["pct_alterado"],
+                })
+        proyecciones_por_horizonte[h] = items
 
     pestañas = [
         {
@@ -550,6 +669,8 @@ def reporte_atenciones(year=None, convenio=None, area=None, altitud_banda=None, 
         "pestañas": pestañas,
         "insights": _generar_insights(filas_clinico, filas_nutri),
         "total_clinico": total_clinico,
+        "proyecciones_por_horizonte": proyecciones_por_horizonte,
+        "horizonte_max": _HORIZONTE_MAX_ANIOS,
     }
 
 

@@ -57,5 +57,8 @@ def reporte_atenciones_view(request):
         "selected_area": area or "",
         "selected_altitud": altitud_banda or "",
         "selected_departamento": (departamento or "").upper(),
+        "proyecciones_por_horizonte": data.get("proyecciones_por_horizonte", {}),
+        "horizonte_max": data.get("horizonte_max", 5),
+        "horizontes": list(range(1, data.get("horizonte_max", 5) + 1)),
     }
     return render(request, "admin/pacientes/reporte_atenciones.html", context)
